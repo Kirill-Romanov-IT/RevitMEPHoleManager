@@ -42,7 +42,9 @@
         <Button Grid.Row="2" Content="Старт"
                 Width="100" Height="35"
                 Background="LimeGreen" Foreground="White"
-                HorizontalAlignment="Center"/>
+                HorizontalAlignment="Center"
+                Click="StartButton_Click"
+                />
 
         <Button Content="?"
         Width="30" Height="30"

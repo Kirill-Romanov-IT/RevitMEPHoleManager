@@ -14,7 +14,7 @@ namespace RevitMEPHoleManager
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            MainWindow window = new MainWindow();
+            MainWindow window = new MainWindow(commandData.Application);
             window.ShowDialog();
             return Result.Succeeded;
         }
