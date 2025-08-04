@@ -1,0 +1,68 @@
+﻿<Window x:Class="RevitMEPHoleManager.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Автоматическая расстановка отверстий" Height="400" Width="600">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Заголовок -->
+        <TextBlock Text="Автоматическая расстановка отверстий"
+                   FontSize="18" FontWeight="Bold"
+                   HorizontalAlignment="Center"
+                   Margin="0,0,0,20"/>
+
+        <!-- Центральная область -->
+        <Grid Grid.Row="1" Margin="0,10,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Левая колонка: только выбор семейства -->
+            <StackPanel Grid.Column="0" Margin="10">
+                <TextBlock Text="Выбор семейства:" Margin="0,0,0,5"/>
+                <TextBox Height="25"/>
+            </StackPanel>
+
+            <!-- Правая колонка -->
+            <StackPanel Grid.Column="1" Margin="10">
+                <TextBlock Text="Зазор вокруг элемента (мм):" Margin="0,0,0,5"/>
+                <TextBox Height="25"/>
+
+                <TextBlock Text="Объединять отверстия Макс. расстояние (мм):" Margin="0,20,0,5"/>
+                <TextBox Height="25"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Кнопка «Старт» -->
+        <Button Grid.Row="2" Content="Старт"
+                Width="100" Height="35"
+                Background="LimeGreen" Foreground="White"
+                HorizontalAlignment="Center"/>
+
+        <Button Content="?"
+        Width="30" Height="30"
+        FontSize="14" FontWeight="Bold"
+        Background="#163D7A" Foreground="White"
+        BorderBrush="{x:Null}"
+        HorizontalAlignment="Right"
+        VerticalAlignment="Bottom"
+        Padding="0"
+        Grid.Row="2" Margin="0,0,-18,-17">
+
+            <!-- единственная строка, которая делает кнопку круглой -->
+            <Button.Resources>
+                <Style TargetType="Border">
+                    <Setter Property="CornerRadius" Value="22"/>
+                </Style>
+            </Button.Resources>
+
+        </Button>
+
+
+    </Grid>
+</Window>
