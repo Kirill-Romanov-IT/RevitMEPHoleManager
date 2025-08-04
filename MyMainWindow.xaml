@@ -25,7 +25,9 @@
             <!-- Левая колонка: только выбор семейства -->
             <StackPanel Grid.Column="0" Margin="10">
                 <TextBlock Text="Выбор семейства:" Margin="0,0,0,5"/>
-                <TextBox Height="25"/>
+                <ComboBox x:Name="FamilyCombo"
+              Height="25"
+              IsEditable="False"/>
             </StackPanel>
 
             <!-- Правая колонка -->

@@ -1,7 +1,9 @@
-﻿using System.Collections.Generic;
-using System.Windows;
-using Autodesk.Revit.DB;
+﻿using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using System.Collections.Generic;
+using System.Linq;
+using System.Windows;
+
 
 namespace RevitMEPHoleManager
 {
@@ -13,7 +15,40 @@ namespace RevitMEPHoleManager
         {
             InitializeComponent();
             _uiApp = uiApp;
+
+            PopulateGenericModelFamilies();
         }
+
+        /// <summary>
+        /// Заполняет ComboBox всеми семействами категории Generic Model.
+        /// </summary>
+        private void PopulateGenericModelFamilies()
+        {
+            Document doc = _uiApp.ActiveUIDocument.Document;
+
+            // Берём только семьи, у которых есть хотя бы один семейный тип
+            IEnumerable<Family> families = new FilteredElementCollector(doc)
+                .OfClass(typeof(Family))
+                .Cast<Family>()
+                .Where(f => f.FamilyCategory != null &&
+                            f.FamilyCategory.Id.IntegerValue == (int)BuiltInCategory.OST_GenericModel &&
+                            f.GetFamilySymbolIds().Count > 0);
+
+            // Показываем имя семейства и храним Id для дальнейшего использования
+            var items = families
+                .Select(f => new { Name = f.Name, Id = f.Id })   // анонимный объект
+                .OrderBy(i => i.Name)
+                .ToList();
+
+            FamilyCombo.ItemsSource = items;
+            FamilyCombo.DisplayMemberPath = "Name";   // what user sees
+            FamilyCombo.SelectedValuePath = "Id";     // what we можем получить через FamilyCombo.SelectedValue
+            if (items.Count > 0)
+                FamilyCombo.SelectedIndex = 0;
+        }
+
+        /* остальной код (StartButton_Click и т.д.) остаётся без изменений */
+    
 
         /// <summary>Обработчик кнопки «Старт».</summary>
         private void StartButton_Click(object sender, RoutedEventArgs e)
