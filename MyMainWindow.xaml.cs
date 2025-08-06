@@ -5,6 +5,7 @@ using System.Windows;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
+
 namespace RevitMEPHoleManager
 {
     public partial class MainWindow : Window
@@ -100,8 +101,14 @@ namespace RevitMEPHoleManager
                     mepList.Add((mep, lTx));
             }
 
-            var (wRnd, wRec, fRnd, fRec) = IntersectionStats.Analyze(hostElems, mepList);
+            // <<< ДОБАВИТЕ ВОТ ЭТИ ДВЕ СТРОКИ >>>
+            var (wRnd, wRec, fRnd, fRec, clashList) =
+    IntersectionStats.Analyze(hostElems, mepList);
 
+            // 3.1  – заполняем DataGrid
+            StatsGrid.ItemsSource = clashList;
+
+            // 3.2  – всплывающее окно с итогами
             TaskDialog.Show("Статистика пересечений",
                 $"В стенах:\n  • круглые   — {wRnd}\n  • квадратные — {wRec}\n\n" +
                 $"В перекрытиях:\n  • круглые   — {fRnd}\n  • квадратные — {fRec}");

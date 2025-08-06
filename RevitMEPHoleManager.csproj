@@ -54,6 +54,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="App.cs" />
+    <Compile Include="SizeHelper.cs" />
     <Compile Include="IntersectionStats.cs" />
     <Compile Include="MyMainWindow.xaml.cs">
       <DependentUpon>MyMainWindow.xaml</DependentUpon>
