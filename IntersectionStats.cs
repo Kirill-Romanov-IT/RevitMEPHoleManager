@@ -32,7 +32,8 @@ namespace RevitMEPHoleManager
         /// <returns>(wRnd, wRec, fRnd, fRec, rows)</returns>
         public static (int wRnd, int wRec, int fRnd, int fRec, List<IntersectRow> rows)
             Analyze(IEnumerable<Element> hosts,
-                    IEnumerable<(Element elem, Transform tx)> mepList)
+                    IEnumerable<(Element elem, Transform tx)> mepList,
+                    double clearanceMm)
         {
             int wRnd = 0, wRec = 0, fRnd = 0, fRec = 0;
             var rows = new List<IntersectRow>();
@@ -102,6 +103,16 @@ namespace RevitMEPHoleManager
                         elemW = w; elemH = h;
                     }
 
+                    // размеры готового отверстия
+                    Calculaters.GetHoleSize(
+                        isRound,
+                        elemW,
+                        elemH,
+                        clearanceMm,
+                        out double holeW,
+                        out double holeH,
+                        out string holeType);
+
                     rows.Add(new IntersectRow
                     {
                         HostId = host.Id.IntegerValue,
@@ -114,9 +125,9 @@ namespace RevitMEPHoleManager
                         ElemWidthMm = elemW,
                         ElemHeightMm = elemH,
 
-                        HoleWidthMm = 0,              // заполним позже
-                        HoleHeightMm = 0,
-                        HoleTypeName = string.Empty
+                        HoleWidthMm = holeW,
+                        HoleHeightMm = holeH,
+                        HoleTypeName = holeType
                     });
                 }
             }

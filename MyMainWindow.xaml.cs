@@ -106,27 +106,12 @@ namespace RevitMEPHoleManager
             }
 
             // ── 3. анализ пересечений ──
+            double clearance = 50;                                       // дефолт
+            _ = double.TryParse(ClearanceBox.Text, out double cTmp);     // если ввели число — берём
+            if (cTmp > 0) clearance = cTmp;
+
             var (wRnd, wRec, fRnd, fRec, clashList) =
-                IntersectionStats.Analyze(hostElems, mepList);
-
-            // 3.1. заполняем доп. поля (габариты отверстия + имя типоразмера)
-            const double GAP = 50.0;          // мм (по ТЗ — зазор по умолчанию)
-
-            foreach (var r in clashList)
-            {
-                if (r.Shape == "Круг")
-                {
-                    r.HoleWidthMm = r.ElemWidthMm + GAP;
-                    r.HoleHeightMm = r.ElemHeightMm + GAP;     // одинаково
-                }
-                else
-                {
-                    r.HoleWidthMm = r.ElemWidthMm + GAP;
-                    r.HoleHeightMm = r.ElemHeightMm + GAP;
-                }
-
-                r.HoleTypeName = holeSym?.Name ?? string.Empty;
-            }
+                IntersectionStats.Analyze(hostElems, mepList, clearance);
 
             // 3.2. выводим в DataGrid
             StatsGrid.ItemsSource = clashList;
