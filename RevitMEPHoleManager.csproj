@@ -55,6 +55,7 @@
   <ItemGroup>
     <Compile Include="App.cs" />
     <Compile Include="Calculaters.cs" />
+    <Compile Include="HostStatRow.cs" />
     <Compile Include="SizeHelper.cs" />
     <Compile Include="IntersectionStats.cs" />
     <Compile Include="MyMainWindow.xaml.cs">

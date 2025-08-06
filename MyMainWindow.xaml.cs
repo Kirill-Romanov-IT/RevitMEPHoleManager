@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Data;
+using System.ComponentModel;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
@@ -106,15 +108,22 @@ namespace RevitMEPHoleManager
             }
 
             // ── 3. анализ пересечений ──
-            double clearance = 50;                                       // дефолт
-            _ = double.TryParse(ClearanceBox.Text, out double cTmp);     // если ввели число — берём
-            if (cTmp > 0) clearance = cTmp;
+            double clearance = 50;
+            if (double.TryParse(ClearanceBox.Text, out double cTmp) && cTmp > 0)
+                clearance = cTmp;
 
-            var (wRnd, wRec, fRnd, fRec, clashList) =
+            var (wRnd, wRec, fRnd, fRec, clashList, hostStats) =
                 IntersectionStats.Analyze(hostElems, mepList, clearance);
 
-            // 3.2. выводим в DataGrid
-            StatsGrid.ItemsSource = clashList;
+            /* --- 3.1   DataGrid с детализацией пересечений
+             *            + группировка по HostId            --- */
+            var cvs = new CollectionViewSource { Source = clashList };
+            cvs.GroupDescriptions.Add(new PropertyGroupDescription("HostId")); // Группируем
+            StatsGrid.ItemsSource = cvs.View;
+
+            /* --- 3.2   (необязательно) вторая таблица
+             *            со сводкой по хостам              --- */
+            HostStatsGrid.ItemsSource = hostStats;          // <— см. XAML ниже
 
             // 3.3. всплывающее окно-сводка
             TaskDialog.Show("Статистика пересечений",

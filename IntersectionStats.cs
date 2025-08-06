@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using Autodesk.Revit.DB;
 
 namespace RevitMEPHoleManager
@@ -29,14 +30,15 @@ namespace RevitMEPHoleManager
     /// </summary>
     internal static class IntersectionStats
     {
-        /// <returns>(wRnd, wRec, fRnd, fRec, rows)</returns>
-        public static (int wRnd, int wRec, int fRnd, int fRec, List<IntersectRow> rows)
+        /// <returns>(wRnd, wRec, fRnd, fRec, rows, hostStats)</returns>
+        public static (int wRnd, int wRec, int fRnd, int fRec, List<IntersectRow> rows, List<HostStatRow> hostStats)
             Analyze(IEnumerable<Element> hosts,
                     IEnumerable<(Element elem, Transform tx)> mepList,
                     double clearanceMm)
         {
             int wRnd = 0, wRec = 0, fRnd = 0, fRec = 0;
             var rows = new List<IntersectRow>();
+            var hostDict = new Dictionary<int, HostStatRow>();   // HostId → сводка
 
             bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b) =>
                 !(a.Max.X < b.Min.X || a.Min.X > b.Max.X ||
@@ -91,6 +93,18 @@ namespace RevitMEPHoleManager
                     if (isWall) { if (isRound) wRnd++; else wRec++; }
                     if (isFloor) { if (isRound) fRnd++; else fRec++; }
 
+                    // ── обновляем счётчик по конкретному хосту ──
+                    if (!hostDict.TryGetValue(host.Id.IntegerValue, out var hs))
+                    {
+                        hs = new HostStatRow
+                        {
+                            HostId = host.Id.IntegerValue,
+                            HostName = hostLbl
+                        };
+                        hostDict.Add(hs.HostId, hs);
+                    }
+                    if (isRound) hs.Round++; else hs.Rect++;
+
                     // --- исходные размеры трассы ---
                     double elemW = 0, elemH = 0;
                     if (isRound && SizeHelper.TryGetRoundDiameter(mep, out double d))
@@ -132,7 +146,7 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            return (wRnd, wRec, fRnd, fRec, rows);
+            return (wRnd, wRec, fRnd, fRec, rows, hostDict.Values.ToList());
         }
     }
 }

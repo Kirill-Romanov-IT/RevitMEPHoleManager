@@ -2,18 +2,18 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Автоматическая расстановка отверстий"
-        Height="500" Width="960">
+        Height="550" Width="760">
 
-    <!-- корневой контейнер -->
     <Grid Margin="20">
-        <!-- строки корневой сетки -->
+        <!-- 0-я строка — заголовок -->
+        <!-- 1-я строка — настройки + основная таблица -->
+        <!-- 2-я строка — сводная таблица по хостам  ✅ -->
+        <!-- 3-я строка — кнопки -->
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <!-- заголовок -->
             <RowDefinition Height="*"/>
-            <!-- настройки + таблица -->
+            <RowDefinition Height="120"/>   <!-- ✦ новая строка -->
             <RowDefinition Height="Auto"/>
-            <!-- кнопки -->
         </Grid.RowDefinitions>
 
         <!-- ───────── Заголовок ───────── -->
@@ -57,51 +57,42 @@
                 </StackPanel>
             </Grid>
 
-            <!-- ── DataGrid со статистикой пересечений ── -->
-            <DataGrid Grid.Row="1"
-                      x:Name="StatsGrid"
+            <!-- ───────── Основная таблица пересечений ───────── -->
+            <DataGrid x:Name="StatsGrid"
+                      Grid.Row="1"
                       AutoGenerateColumns="False"
                       IsReadOnly="True"
                       Margin="0,10,0,0">
-
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="Хост"
-                                        Binding="{Binding Host}"
-                                        Width="110"/>
-                    <DataGridTextColumn Header="Host Id"
-                                        Binding="{Binding HostId}"
-                                        Width="80"/>
-                    <DataGridTextColumn Header="MEP Id"
-                                        Binding="{Binding MepId}"
-                                        Width="80"/>
-                    <DataGridTextColumn Header="Форма"
-                                        Binding="{Binding Shape}"
-                                        Width="80"/>
-
-                    <!-- ───── размеры трассы ───── -->
-                    <DataGridTextColumn Header="Ø / Шир. трассы, мм"
-                                        Binding="{Binding ElemWidthMm, StringFormat=N0}"
-                                        Width="110"/>
-                    <DataGridTextColumn Header="Высота трассы, мм"
-                                        Binding="{Binding ElemHeightMm, StringFormat=N0}"
-                                        Width="110"/>
-
-                    <!-- ───── размеры отверстия ───── -->
-                    <DataGridTextColumn Header="Шир. отверстия, мм"
-                                        Binding="{Binding HoleWidthMm, StringFormat=N0}"
-                                        Width="110"/>
-                    <DataGridTextColumn Header="Выс. отверстия, мм"
-                                        Binding="{Binding HoleHeightMm, StringFormat=N0}"
-                                        Width="110"/>
-                    <DataGridTextColumn Header="Типо-размер"
-                                        Binding="{Binding HoleTypeName}"
-                                        Width="150"/>
+                    <DataGridTextColumn Header="Хост"          Binding="{Binding Host}"   Width="110"/>
+                    <DataGridTextColumn Header="Host Id"       Binding="{Binding HostId}" Width="65"/>
+                    <DataGridTextColumn Header="MEP Id"        Binding="{Binding MepId}"  Width="65"/>
+                    <DataGridTextColumn Header="Форма"         Binding="{Binding Shape}"  Width="75"/>
+                    <DataGridTextColumn Header="Ø / Шир., мм"  Binding="{Binding ElemWidthMm, StringFormat=N0}"  Width="85"/>
+                    <DataGridTextColumn Header="Высота, мм"    Binding="{Binding ElemHeightMm, StringFormat=N0}"  Width="85"/>
+                    <DataGridTextColumn Header="Отв. Шир., мм" Binding="{Binding HoleWidthMm, StringFormat=N0}"  Width="85"/>
+                    <DataGridTextColumn Header="Отв. Выс., мм" Binding="{Binding HoleHeightMm, StringFormat=N0}" Width="85"/>
+                    <DataGridTextColumn Header="Типоразмер"    Binding="{Binding HoleTypeName}" Width="120"/>
                 </DataGrid.Columns>
             </DataGrid>
         </Grid>
 
+        <!-- ───────── Сводка по каждой стене / плите ───────── -->
+        <DataGrid x:Name="HostStatsGrid"
+                  Grid.Row="2"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  Margin="0,10,0,0">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Host Id"     Binding="{Binding HostId}"   Width="65"/>
+                <DataGridTextColumn Header="Хост"        Binding="{Binding HostName}" Width="110"/>
+                <DataGridTextColumn Header="Круглых"     Binding="{Binding Round}"    Width="80"/>
+                <DataGridTextColumn Header="Квадратных"  Binding="{Binding Rect}"     Width="95"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
         <!-- ───────── Кнопки ───────── -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition/>
                 <ColumnDefinition Width="Auto"/>
