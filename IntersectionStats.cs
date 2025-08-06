@@ -1,25 +1,25 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Autodesk.Revit.DB;
 
 namespace RevitMEPHoleManager
 {
-    /// <summary>Подсчитывает, сколько коллизий имеют круглую и прямоугольную геометрию.</summary>
+    /// <summary>
+    /// Подсчитывает количество круглых / прямоугольных пересечений
+    /// отдельно для стен и перекрытий.
+    /// </summary>
     internal static class IntersectionStats
     {
-        /// <summary>
-        /// Анализирует пересечения и возвращает количество круглых и прямоугольных.
-        /// </summary>
-        /// <param name="hosts">Стены и/или перекрытия, в которых ищем отверстия.</param>
-        /// <param name="mepList">MEP-элементы и их трансформа к координатам хоста.</param>
-        /// <returns>(roundCount, rectangularCount)</returns>
-        public static (int roundCnt, int rectCnt) Analyze(
-            IEnumerable<Element> hosts,
-            IEnumerable<(Element mep, Transform tx)> mepList)
+        /// <returns>
+        /// (wallRound, wallRect, floorRound, floorRect)
+        /// </returns>
+        public static (int wRnd, int wRec, int fRnd, int fRec) Analyze(
+            IEnumerable<Element> hosts,                       // стены + плиты
+            IEnumerable<(Element elem, Transform tx)> mepList // MEP + их трансформы
+        )
         {
-            int roundCnt = 0, rectCnt = 0;
+            int wRnd = 0, wRec = 0, fRnd = 0, fRec = 0;
 
-            bool BoxesIntersect(BoundingBoxXYZ a, BoundingBoxXYZ b)
+            bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b)
             {
                 return !(a.Max.X < b.Min.X || a.Min.X > b.Max.X ||
                          a.Max.Y < b.Min.Y || a.Min.Y > b.Max.Y ||
@@ -28,55 +28,53 @@ namespace RevitMEPHoleManager
 
             foreach (Element host in hosts)
             {
-                BoundingBoxXYZ hBox = host.get_BoundingBox(null);
+                var hBox = host.get_BoundingBox(null);
                 if (hBox == null) continue;
+
+                bool isWall = host is Wall;
+                bool isFloor = host is Floor;
 
                 foreach ((Element mep, Transform tx) in mepList)
                 {
-                    BoundingBoxXYZ bb = mep.get_BoundingBox(null);
+                    var bb = mep.get_BoundingBox(null);
                     if (bb == null) continue;
 
-                    // преобразуем в координаты хоста
-                    BoundingBoxXYZ bbHost = new BoundingBoxXYZ
+                    // BoundingBox MEP → координаты хоста
+                    var bbHost = new BoundingBoxXYZ
                     {
                         Min = tx.OfPoint(bb.Min),
                         Max = tx.OfPoint(bb.Max)
                     };
 
-                    if (!BoxesIntersect(hBox, bbHost)) continue;
+                    if (!Intersects(hBox, bbHost)) continue;
 
-                    // классификация формы
-                    switch (mep.Category.Id.IntegerValue)
+                    bool isRound = false; // классификация формы
+
+                    switch ((BuiltInCategory)mep.Category.Id.IntegerValue)
                     {
-                        // трубы всегда считаем круглыми
-                        case (int)BuiltInCategory.OST_PipeCurves:
-                            roundCnt++;
+                        case BuiltInCategory.OST_PipeCurves:
+                            isRound = true;               // трубы – круглые
                             break;
 
-                        // воздуховоды: смотрим тип
-                        case (int)BuiltInCategory.OST_DuctCurves:
+                        case BuiltInCategory.OST_DuctCurves:
                             {
-                                Element typeElem = mep.Document.GetElement(mep.GetTypeId());
-                                if (typeElem is MEPCurveType mType)
-                                {
-                                    if (mType.Shape == ConnectorProfileType.Round)
-                                        roundCnt++;
-                                    else
-                                        rectCnt++;            // Rectangular, Oval, Oblong → считаем «квадратными»
-                                }
-                                else rectCnt++;
+                                var type = mep.Document.GetElement(mep.GetTypeId()) as MEPCurveType;
+                                isRound = type?.Shape == ConnectorProfileType.Round;
                                 break;
                             }
 
-                        // кабель-лотки
-                        case (int)BuiltInCategory.OST_CableTray:
-                            rectCnt++;
+                        case BuiltInCategory.OST_CableTray:
+                            isRound = false;              // лотки – «квадратные»
                             break;
                     }
 
+                    if (isWall)
+                        if (isRound) wRnd++; else wRec++;
+                    if (isFloor)
+                        if (isRound) fRnd++; else fRec++;
                 }
             }
-            return (roundCnt, rectCnt);
+            return (wRnd, wRec, fRnd, fRec);
         }
     }
 }
