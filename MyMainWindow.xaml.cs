@@ -51,13 +51,10 @@ namespace RevitMEPHoleManager
                 return;
             }
 
-            ElementId famId = (ElementId)FamilyCombo.SelectedValue;
-            Family family = doc.GetElement(famId) as Family;
-            FamilySymbol baseSym =
-                doc.GetElement(family.GetFamilySymbolIds().First()) as FamilySymbol;
-
             // ── гарантируем тип «Копия1» ──
             const string NEW_TYPE = "Копия1";
+            Family family = doc.GetElement((ElementId)FamilyCombo.SelectedValue) as Family;
+            FamilySymbol baseSym = doc.GetElement(family.GetFamilySymbolIds().First()) as FamilySymbol;
             FamilySymbol holeSym = family.GetFamilySymbolIds()
                 .Select(id => doc.GetElement(id) as FamilySymbol)
                 .FirstOrDefault(s => s.Name.Equals(NEW_TYPE, StringComparison.OrdinalIgnoreCase));
@@ -72,46 +69,39 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            // ── 1. собираем стены хоста ──
-            IList<Element> wallsHost = new FilteredElementCollector(doc)
-                                       .OfClass(typeof(Wall))
-                                       .ToElements();
+            // ── 1. Хост-элементы: стены + перекрытия ──
+            IList<Element> hostElems = new FilteredElementCollector(doc)
+                .WherePasses(new LogicalOrFilter(
+                                new ElementClassFilter(typeof(Wall)),
+                                new ElementClassFilter(typeof(Floor))))   // добавили Floor
+                .ToElements();
 
-            // ── 2. строим фильтр MEP (Pipe ∨ Duct ∨ Tray) для старого API ──
+            // ── 2. Собираем MEP из хоста и всех связей ──
             ElementFilter fPipe = new ElementCategoryFilter(BuiltInCategory.OST_PipeCurves);
             ElementFilter fDuct = new ElementCategoryFilter(BuiltInCategory.OST_DuctCurves);
             ElementFilter fTray = new ElementCategoryFilter(BuiltInCategory.OST_CableTray);
             ElementFilter mepFilter = new LogicalOrFilter(new LogicalOrFilter(fPipe, fDuct), fTray);
 
-            // локальная функция: все MEP-элементы в документе d
             IEnumerable<Element> CollectMEP(Document d) =>
                 new FilteredElementCollector(d).WherePasses(mepFilter).ToElements();
 
-            // ── 3. список (Element, Transform) из хоста и связей ──
             var mepList = new List<(Element elem, Transform tx)>();
-
-            // 3.1 MEP из активной модели
-            foreach (Element mep in CollectMEP(doc))
+            foreach (Element mep in CollectMEP(doc))                                           // из активной модели
                 mepList.Add((mep, Transform.Identity));
 
-            // 3.2 MEP из Revit-связей
             foreach (RevitLinkInstance link in
                      new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>())
             {
-                Document linkDoc = link.GetLinkDocument();
-                if (linkDoc == null) continue;           // связь не загружена
+                Document lDoc = link.GetLinkDocument();
+                if (lDoc == null) continue;                    // ссылка не загружена
 
-                Transform lTx = link.GetTransform();     // связь → хост
-                foreach (Element mepElem in CollectMEP(linkDoc))
-                    mepList.Add((mepElem, lTx));
+                Transform lTx = link.GetTransform();           // связь → хост
+                foreach (Element mep in CollectMEP(lDoc))
+                    mepList.Add((mep, lTx));
             }
 
-            // ── 4. вставляем отверстия ──
-            int placed = 0;
-            Options opt = new Options { ComputeReferences = true };
-
-            // простая проверка пересечения BoundingBox'ов
-            bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ center)
+            // ── 3. Пересечения и вставка отверстий ──
+            bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ ctr)
             {
                 double minX = Math.Max(a.Min.X, b.Min.X);
                 double minY = Math.Max(a.Min.Y, b.Min.Y);
@@ -120,59 +110,57 @@ namespace RevitMEPHoleManager
                 double maxY = Math.Min(a.Max.Y, b.Max.Y);
                 double maxZ = Math.Min(a.Max.Z, b.Max.Z);
                 bool hit = (minX <= maxX) && (minY <= maxY) && (minZ <= maxZ);
-                center = hit ? new XYZ((minX + maxX) / 2,
-                                       (minY + maxY) / 2,
-                                       (minZ + maxZ) / 2) : null;
+                ctr = hit ? new XYZ((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2) : null;
                 return hit;
             }
+
+            int placed = 0;
+            Options opt = new Options { ComputeReferences = true };
 
             using (Transaction tr = new Transaction(doc, "Place holes"))
             {
                 tr.Start();
                 if (!holeSym.IsActive) holeSym.Activate();
 
-                foreach (Wall wall in wallsHost)
+                foreach (Element host in hostElems)
                 {
-                    BoundingBoxXYZ wBox = wall.get_BoundingBox(null);
-                    if (wBox == null) continue;
+                    BoundingBoxXYZ hBox = host.get_BoundingBox(null); if (hBox == null) continue;
 
                     foreach ((Element mepElem, Transform tx) in mepList)
                     {
-                        BoundingBoxXYZ bb = mepElem.get_BoundingBox(null);
-                        if (bb == null) continue;
+                        BoundingBoxXYZ bb = mepElem.get_BoundingBox(null); if (bb == null) continue;
 
-                        // трансформируем BoundingBox MEP-элемента в координаты хоста
-                        BoundingBoxXYZ bbHost = new BoundingBoxXYZ
+                        BoundingBoxXYZ bbHost = new BoundingBoxXYZ          // bb → координаты хоста
                         {
                             Min = tx.OfPoint(bb.Min),
                             Max = tx.OfPoint(bb.Max)
                         };
 
-                        if (!Intersects(wBox, bbHost, out XYZ clashPt)) continue;
+                        if (!Intersects(hBox, bbHost, out XYZ clashPt)) continue;
 
-                        // ищем грань стены
-                        Face hostFace = null; XYZ pOnFace = null; UV uv = null;
-                        foreach (GeometryObject go in wall.get_Geometry(opt))
+                        // ищем грань (работает и для стены, и для плиты)
+                        Face face = null; XYZ pOnFace = null; UV uv = null;
+                        foreach (GeometryObject go in host.get_Geometry(opt))
                         {
                             if (go is Solid s)
                                 foreach (Face f in s.Faces)
                                 {
-                                    var proj = f.Project(clashPt);
-                                    if (proj != null) { hostFace = f; pOnFace = proj.XYZPoint; uv = proj.UVPoint; break; }
+                                    var pr = f.Project(clashPt);
+                                    if (pr != null) { face = f; pOnFace = pr.XYZPoint; uv = pr.UVPoint; break; }
                                 }
-                            if (hostFace != null) break;
+                            if (face != null) break;
                         }
-                        if (hostFace == null) continue;
+                        if (face == null) continue;
 
-                        // направление и точка вставки
-                        XYZ normal = hostFace.ComputeNormal(uv).Normalize();
+                        XYZ normal = face.ComputeNormal(uv).Normalize();
                         XYZ refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() < 1e-9
                                      ? normal.CrossProduct(XYZ.BasisX)
                                      : normal.CrossProduct(XYZ.BasisZ);
                         refDir = refDir.Normalize();
-                        XYZ placePt = pOnFace + normal * (1.0 / 304.8); // +1 мм наружу
 
-                        doc.Create.NewFamilyInstance(hostFace.Reference, placePt, refDir, holeSym);
+                        XYZ placePt = pOnFace + normal * (1.0 / 304.8);   // +1 мм наружу
+
+                        doc.Create.NewFamilyInstance(face.Reference, placePt, refDir, holeSym);
                         placed++;
                     }
                 }
