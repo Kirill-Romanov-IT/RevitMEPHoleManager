@@ -100,6 +100,12 @@ namespace RevitMEPHoleManager
                     mepList.Add((mep, lTx));
             }
 
+            var (roundCnt, rectCnt) = IntersectionStats.Analyze(hostElems, mepList);
+
+            TaskDialog.Show("Статистика пересечений",
+                            $"Круглых пересечений: {roundCnt}\n" +
+                            $"Прямоугольных пересечений: {rectCnt}");
+
             // ── 3. Пересечения и вставка отверстий ──
             bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ ctr)
             {
