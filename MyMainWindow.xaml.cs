@@ -5,7 +5,6 @@ using System.Windows;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
-
 namespace RevitMEPHoleManager
 {
     public partial class MainWindow : Window
@@ -19,7 +18,9 @@ namespace RevitMEPHoleManager
             PopulateGenericModelFamilies();
         }
 
-        // ───────────────── ComboBox ─────────────────
+        // ────────────────────────────────────────────────
+        //  ComboBox: все семейства Generic Model (face-based)
+        // ────────────────────────────────────────────────
         private void PopulateGenericModelFamilies()
         {
             Document doc = _uiApp.ActiveUIDocument.Document;
@@ -40,12 +41,14 @@ namespace RevitMEPHoleManager
             if (list.Count > 0) FamilyCombo.SelectedIndex = 0;
         }
 
-        // ───────────────── Старт ─────────────────
+        // ────────────────────────────────────────────────
+        //  Старт
+        // ────────────────────────────────────────────────
         private void StartButton_Click(object sender, RoutedEventArgs e)
         {
             Document doc = _uiApp.ActiveUIDocument.Document;
 
-            // 0. Проверяем выбранное семейство
+            // 0. проверяем выбранное семейство
             if (FamilyCombo.SelectedValue == null)
             {
                 MessageBox.Show("Сначала выберите face-based семейство Generic Model.");
@@ -57,8 +60,8 @@ namespace RevitMEPHoleManager
             Family family = doc.GetElement((ElementId)FamilyCombo.SelectedValue) as Family;
             FamilySymbol baseSym = doc.GetElement(family.GetFamilySymbolIds().First()) as FamilySymbol;
             FamilySymbol holeSym = family.GetFamilySymbolIds()
-                .Select(id => doc.GetElement(id) as FamilySymbol)
-                .FirstOrDefault(s => s.Name.Equals(NEW_TYPE, StringComparison.OrdinalIgnoreCase));
+                                         .Select(id => doc.GetElement(id) as FamilySymbol)
+                                         .FirstOrDefault(s => s.Name.Equals(NEW_TYPE, StringComparison.OrdinalIgnoreCase));
 
             if (holeSym == null)
             {
@@ -70,14 +73,14 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            // ── 1. Хост-элементы: стены + перекрытия ──
+            // ── 1. хост-элементы: стены + перекрытия ──
             IList<Element> hostElems = new FilteredElementCollector(doc)
                 .WherePasses(new LogicalOrFilter(
                                 new ElementClassFilter(typeof(Wall)),
-                                new ElementClassFilter(typeof(Floor))))   // добавили Floor
+                                new ElementClassFilter(typeof(Floor))))
                 .ToElements();
 
-            // ── 2. Собираем MEP из хоста и всех связей ──
+            // ── 2. собираем MEP из хоста и всех связей ──
             ElementFilter fPipe = new ElementCategoryFilter(BuiltInCategory.OST_PipeCurves);
             ElementFilter fDuct = new ElementCategoryFilter(BuiltInCategory.OST_DuctCurves);
             ElementFilter fTray = new ElementCategoryFilter(BuiltInCategory.OST_CableTray);
@@ -87,33 +90,53 @@ namespace RevitMEPHoleManager
                 new FilteredElementCollector(d).WherePasses(mepFilter).ToElements();
 
             var mepList = new List<(Element elem, Transform tx)>();
-            foreach (Element mep in CollectMEP(doc))                                           // из активной модели
+
+            foreach (Element mep in CollectMEP(doc))                       // активная модель
                 mepList.Add((mep, Transform.Identity));
 
             foreach (RevitLinkInstance link in
                      new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>())
             {
                 Document lDoc = link.GetLinkDocument();
-                if (lDoc == null) continue;                    // ссылка не загружена
+                if (lDoc == null) continue;        // ссылка не загружена
 
-                Transform lTx = link.GetTransform();           // связь → хост
+                Transform lTx = link.GetTransform();   // связь → координаты хоста
                 foreach (Element mep in CollectMEP(lDoc))
                     mepList.Add((mep, lTx));
             }
 
-            // <<< ДОБАВИТЕ ВОТ ЭТИ ДВЕ СТРОКИ >>>
+            // ── 3. анализ пересечений ──
             var (wRnd, wRec, fRnd, fRec, clashList) =
-    IntersectionStats.Analyze(hostElems, mepList);
+                IntersectionStats.Analyze(hostElems, mepList);
 
-            // 3.1  – заполняем DataGrid
+            // 3.1. заполняем доп. поля (габариты отверстия + имя типоразмера)
+            const double GAP = 50.0;          // мм (по ТЗ — зазор по умолчанию)
+
+            foreach (var r in clashList)
+            {
+                if (r.Shape == "Круг")
+                {
+                    r.HoleWidthMm = r.ElemWidthMm + GAP;
+                    r.HoleHeightMm = r.ElemHeightMm + GAP;     // одинаково
+                }
+                else
+                {
+                    r.HoleWidthMm = r.ElemWidthMm + GAP;
+                    r.HoleHeightMm = r.ElemHeightMm + GAP;
+                }
+
+                r.HoleTypeName = holeSym?.Name ?? string.Empty;
+            }
+
+            // 3.2. выводим в DataGrid
             StatsGrid.ItemsSource = clashList;
 
-            // 3.2  – всплывающее окно с итогами
+            // 3.3. всплывающее окно-сводка
             TaskDialog.Show("Статистика пересечений",
                 $"В стенах:\n  • круглые   — {wRnd}\n  • квадратные — {wRec}\n\n" +
                 $"В перекрытиях:\n  • круглые   — {fRnd}\n  • квадратные — {fRec}");
 
-            // ── 3. Пересечения и вставка отверстий ──
+            // ── 4. вставка отверстий ──
             bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ ctr)
             {
                 double minX = Math.Max(a.Min.X, b.Min.X);
@@ -123,7 +146,9 @@ namespace RevitMEPHoleManager
                 double maxY = Math.Min(a.Max.Y, b.Max.Y);
                 double maxZ = Math.Min(a.Max.Z, b.Max.Z);
                 bool hit = (minX <= maxX) && (minY <= maxY) && (minZ <= maxZ);
-                ctr = hit ? new XYZ((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2) : null;
+                ctr = hit ? new XYZ((minX + maxX) / 2,
+                                    (minY + maxY) / 2,
+                                    (minZ + maxZ) / 2) : null;
                 return hit;
             }
 
@@ -143,7 +168,8 @@ namespace RevitMEPHoleManager
                     {
                         BoundingBoxXYZ bb = mepElem.get_BoundingBox(null); if (bb == null) continue;
 
-                        BoundingBoxXYZ bbHost = new BoundingBoxXYZ          // bb → координаты хоста
+                        // bb → локальные координаты хоста
+                        BoundingBoxXYZ bbHost = new BoundingBoxXYZ
                         {
                             Min = tx.OfPoint(bb.Min),
                             Max = tx.OfPoint(bb.Max)
@@ -151,7 +177,7 @@ namespace RevitMEPHoleManager
 
                         if (!Intersects(hBox, bbHost, out XYZ clashPt)) continue;
 
-                        // ищем грань (работает и для стены, и для плиты)
+                        // ищем подходящую грань
                         Face face = null; XYZ pOnFace = null; UV uv = null;
                         foreach (GeometryObject go in host.get_Geometry(opt))
                         {
@@ -165,10 +191,11 @@ namespace RevitMEPHoleManager
                         }
                         if (face == null) continue;
 
+                        // ориентация отверстия
                         XYZ normal = face.ComputeNormal(uv).Normalize();
                         XYZ refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() < 1e-9
-                                     ? normal.CrossProduct(XYZ.BasisX)
-                                     : normal.CrossProduct(XYZ.BasisZ);
+                                   ? normal.CrossProduct(XYZ.BasisX)
+                                   : normal.CrossProduct(XYZ.BasisZ);
                         refDir = refDir.Normalize();
 
                         XYZ placePt = pOnFace + normal * (1.0 / 304.8);   // +1 мм наружу
@@ -181,9 +208,11 @@ namespace RevitMEPHoleManager
             }
 
             MessageBox.Show(
-                placed > 0 ? $"Вставлено отверстий: {placed}" : "Пересечений не найдено.",
-                "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+                placed > 0 ? $"Вставлено отверстий: {placed}"
+                           : "Пересечений не найдено.",
+                "Результат",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
-
     }
 }

@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Автоматическая расстановка отверстий"
-        Height="500" Width="760">
+        Height="500" Width="960">
 
     <!-- корневой контейнер -->
     <Grid Margin="20">
@@ -11,7 +11,7 @@
             <RowDefinition Height="Auto"/>
             <!-- заголовок -->
             <RowDefinition Height="*"/>
-            <!-- область настроек + таблица -->
+            <!-- настройки + таблица -->
             <RowDefinition Height="Auto"/>
             <!-- кнопки -->
         </Grid.RowDefinitions>
@@ -31,7 +31,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- ── блок настроек (левая и правая колонки) ── -->
+            <!-- ── настройки ── -->
             <Grid Grid.Row="0" Margin="0,10,0,10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -67,7 +67,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="Хост"
                                         Binding="{Binding Host}"
-                                        Width="120"/>
+                                        Width="110"/>
                     <DataGridTextColumn Header="Host Id"
                                         Binding="{Binding HostId}"
                                         Width="80"/>
@@ -77,12 +77,25 @@
                     <DataGridTextColumn Header="Форма"
                                         Binding="{Binding Shape}"
                                         Width="80"/>
-                    <DataGridTextColumn Header="Ø / Шир., мм"
-                                        Binding="{Binding Size1}"
-                                        Width="90"/>
-                    <DataGridTextColumn Header="Высота, мм"
-                                        Binding="{Binding Size2}"
-                                        Width="90"/>
+
+                    <!-- ───── размеры трассы ───── -->
+                    <DataGridTextColumn Header="Ø / Шир. трассы, мм"
+                                        Binding="{Binding ElemWidthMm, StringFormat=N0}"
+                                        Width="110"/>
+                    <DataGridTextColumn Header="Высота трассы, мм"
+                                        Binding="{Binding ElemHeightMm, StringFormat=N0}"
+                                        Width="110"/>
+
+                    <!-- ───── размеры отверстия ───── -->
+                    <DataGridTextColumn Header="Шир. отверстия, мм"
+                                        Binding="{Binding HoleWidthMm, StringFormat=N0}"
+                                        Width="110"/>
+                    <DataGridTextColumn Header="Выс. отверстия, мм"
+                                        Binding="{Binding HoleHeightMm, StringFormat=N0}"
+                                        Width="110"/>
+                    <DataGridTextColumn Header="Типо-размер"
+                                        Binding="{Binding HoleTypeName}"
+                                        Width="150"/>
                 </DataGrid.Columns>
             </DataGrid>
         </Grid>
@@ -94,14 +107,12 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- кнопка Старт -->
             <Button Content="Старт"
                     Width="120" Height="40"
                     Background="LimeGreen" Foreground="White"
                     HorizontalAlignment="Center"
                     Click="StartButton_Click"/>
 
-            <!-- кнопка «?» (справка) -->
             <Button Content="?"
                     Width="30" Height="30"
                     FontSize="14" FontWeight="Bold"
@@ -112,7 +123,6 @@
                     Padding="0"
                     Grid.Column="1" Margin="0,0,-18,-17">
                 <Button.Resources>
-                    <!-- делает кнопку круглой -->
                     <Style TargetType="Border">
                         <Setter Property="CornerRadius" Value="22"/>
                     </Style>
