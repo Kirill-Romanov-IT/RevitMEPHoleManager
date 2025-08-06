@@ -40,7 +40,6 @@ namespace RevitMEPHoleManager
         }
 
         // ───────────────── Старт ─────────────────
-        // ───────────────── Старт ─────────────────
         private void StartButton_Click(object sender, RoutedEventArgs e)
         {
             Document doc = _uiApp.ActiveUIDocument.Document;
