@@ -146,19 +146,57 @@ namespace RevitMEPHoleManager
             int placed = 0;
             Options opt = new Options { ComputeReferences = true };
 
+            // ── 4.1 кэш уже готовых типоразмеров ──
+            var typeCache = new Dictionary<string, FamilySymbol>(StringComparer.OrdinalIgnoreCase);
+
             using (Transaction tr = new Transaction(doc, "Place holes"))
             {
                 tr.Start();
-                if (!holeSym.IsActive) holeSym.Activate();
 
-                foreach (var row in clashList)                      // ← уже с учётом merge
+                foreach (var row in clashList)          // список уже после Merge
                 {
+                    // ── 4.2 получаем (или создаём) нужный FamilySymbol ──
+                    if (!typeCache.TryGetValue(row.HoleTypeName, out FamilySymbol sym))
+                    {
+                        sym = family.GetFamilySymbolIds()
+                                     .Select(id => doc.GetElement(id) as FamilySymbol)
+                                     .FirstOrDefault(s => s.Name.Equals(row.HoleTypeName,
+                                                                        StringComparison.OrdinalIgnoreCase));
+
+                        if (sym == null)                           // нет → дублируем базовый
+                        {
+                            sym = baseSym.Duplicate(row.HoleTypeName) as FamilySymbol;
+
+                            // задаём параметры W / H
+                            void SetParam(string pName, double mm)
+                            {
+                                Parameter p = sym.LookupParameter(pName);
+                                if (p != null && !p.IsReadOnly)
+                                    p.Set(UnitUtils.ConvertToInternalUnits(
+                                            mm, UnitTypeId.Millimeters));
+                            }
+                            
+                            // Устанавливаем ширину
+                            SetParam("W", row.HoleWidthMm);       
+                            SetParam("Width", row.HoleWidthMm);
+                            SetParam("B", row.HoleWidthMm);       
+                            SetParam("HoleWidth", row.HoleWidthMm);
+                            
+                            // Устанавливаем высоту
+                            SetParam("H", row.HoleHeightMm);       
+                            SetParam("Height", row.HoleHeightMm);
+                            SetParam("HoleHeight", row.HoleHeightMm);
+                        }
+                        typeCache[row.HoleTypeName] = sym;
+                    }
+
+                    if (!sym.IsActive) sym.Activate();
+
+                    // ── 4.3 вставляем отверстие ──
                     Element host = doc.GetElement(new ElementId(row.HostId));
                     if (host == null) continue;
 
-                    XYZ clashPt = row.Center;                       // точка пересечения
-
-                    // Находим ближайшее лицо хоста
+                    XYZ clashPt = row.Center;
                     Face face = null; XYZ pOnFace = null; UV uv = null;
                     foreach (GeometryObject go in host.get_Geometry(opt))
                     {
@@ -172,7 +210,6 @@ namespace RevitMEPHoleManager
                     }
                     if (face == null) continue;
 
-                    // ориентация, как раньше
                     XYZ normal = face.ComputeNormal(uv).Normalize();
                     XYZ refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() < 1e-9
                                ? normal.CrossProduct(XYZ.BasisX)
@@ -181,9 +218,10 @@ namespace RevitMEPHoleManager
 
                     XYZ placePt = pOnFace + normal * (1.0 / 304.8);   // +1 мм наружу
 
-                    doc.Create.NewFamilyInstance(face.Reference, placePt, refDir, holeSym);
+                    doc.Create.NewFamilyInstance(face.Reference, placePt, refDir, sym);
                     placed++;
                 }
+
                 tr.Commit();
             }
 
