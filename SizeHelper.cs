@@ -21,9 +21,10 @@ namespace RevitMEPHoleManager
             // ── Трубы ─────────────────────
             if (catId == (int)BuiltInCategory.OST_PipeCurves)
             {
+                // стало: номинальный Ø (DN) в приоритете
                 Parameter p =
-                    mep.get_Parameter(BuiltInParameter.RBS_PIPE_OUTER_DIAMETER) ??
-                    mep.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+                    mep.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM) ??
+                    mep.get_Parameter(BuiltInParameter.RBS_PIPE_OUTER_DIAMETER);
 
                 return ExtractMm(p, out diaMm);
             }
