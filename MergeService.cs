@@ -15,8 +15,9 @@ namespace RevitMEPHoleManager
 
         /// <param name="rows">Список найденных пересечений</param>
         /// <param name="maxGapMm">Максимальный зазор между центрами, мм</param>
+        /// <param name="clearanceMm">Зазор вокруг элемента, мм</param>
         /// <returns>Новый список: одиночные + кластерные (IsMerged = true)</returns>
-        public static IEnumerable<IntersectRow> Merge(IEnumerable<IntersectRow> rows, double maxGapMm)
+        public static IEnumerable<IntersectRow> Merge(IEnumerable<IntersectRow> rows, double maxGapMm, double clearanceMm)
         {
             if (rows == null) return Enumerable.Empty<IntersectRow>();
             if (maxGapMm <= 0) return rows;               // объединение отключено
@@ -63,44 +64,63 @@ namespace RevitMEPHoleManager
                         continue;
                     }
 
-                    //–– строим минимальный прямоугольник по габаритам отверстий
-                    double minXb = cluster.Min(r => r.Center.X - (r.HoleWidthMm * FtPerMm) / 2);
-                    double maxXb = cluster.Max(r => r.Center.X + (r.HoleWidthMm * FtPerMm) / 2);
-                    double minYb = cluster.Min(r => r.Center.Y - (r.HoleHeightMm * FtPerMm) / 2);
-                    double maxYb = cluster.Max(r => r.Center.Y + (r.HoleHeightMm * FtPerMm) / 2);
-
-                    double holeWmm = (maxXb - minXb) / FtPerMm;
-                    double holeHmm = (maxYb - minYb) / FtPerMm;
-
-                    static double Up5(double v) => Math.Ceiling(v / 5.0) * 5.0;
-                    holeWmm = Up5(holeWmm);
-                    holeHmm = Up5(holeHmm);
-
-                    var merged = new IntersectRow
-                    {
-                        HostId = seed.HostId,
-                        MepId = seed.MepId,
-                        Host = seed.Host,
-                        Mep = "Кластер",
-                        Shape = "Прямоуг.",
-
-                        ElemWidthMm = holeWmm,
-                        ElemHeightMm = holeHmm,
-
-                        HoleWidthMm = holeWmm,
-                        HoleHeightMm = holeHmm,
-                        HoleTypeName = $"Прям. {holeWmm}×{holeHmm}",
-
-                        Center = new XYZ((minXb + maxXb) / 2, (minYb + maxYb) / 2, seed.Center.Z),
-                        IsMerged = true,
-                        ClusterId = Guid.NewGuid()
-                    };
-
+                    // Создаём объединённую строку с улучшенным расчётом размеров
+                    var merged = BuildMerged(cluster, clearanceMm);
                     result.Add(merged);
                 }
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Создаёт объединённую строку для кластера с улучшенным расчётом размеров.
+        /// </summary>
+        /// <param name="cluster">Список элементов кластера</param>
+        /// <param name="clearanceMm">Зазор вокруг элемента, мм</param>
+        /// <returns>Объединённая строка IntersectRow</returns>
+        private static IntersectRow BuildMerged(List<IntersectRow> cluster, double clearanceMm)
+        {
+            // ➊  Сумма «горизонтальных» размеров + максимальная высота
+            double elemW = cluster.Sum(r => r.ElemWidthMm);   // Ø трубы или ширина воздуховода
+            double elemH = cluster.Max(r => r.ElemHeightMm);  // высота (для круг. = Ø)
+
+            // ➋  Пересчитываем отверстие (берём прямоугольное под группу)
+            Calculaters.GetHoleSize(
+                isRound: false,           // всегда прямоугольный проём
+                elemW,                    // вся «полка» труб
+                elemH,                    // самая высокая труба / лоток
+                clearanceMm,
+                out double holeW,
+                out double holeH,
+                out string holeType);
+
+            // ➌  Центр кластера (среднее геометрическое центров)
+            double centerX = cluster.Average(r => r.Center.X);
+            double centerY = cluster.Average(r => r.Center.Y);
+            double centerZ = cluster.Average(r => r.Center.Z);
+
+            // ➍  Любой элемент кластера - за основу
+            var row = cluster[0];
+            return new IntersectRow
+            {
+                HostId = row.HostId,
+                MepId = row.MepId,
+                Host = row.Host,
+                Mep = "Кластер",
+                Shape = "Прямоуг.",
+
+                ElemWidthMm = elemW,
+                ElemHeightMm = elemH,
+
+                HoleWidthMm = holeW,
+                HoleHeightMm = holeH,
+                HoleTypeName = holeType,
+
+                Center = new XYZ(centerX, centerY, centerZ),
+                IsMerged = true,
+                ClusterId = Guid.NewGuid()
+            };
         }
     }
 }

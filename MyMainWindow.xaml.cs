@@ -124,7 +124,7 @@ namespace RevitMEPHoleManager
                 mergeDist = mTmp;       // мм
 
             if (mergeOn && mergeDist > 0)
-                clashList = MergeService.Merge(clashList, mergeDist).ToList();
+                clashList = MergeService.Merge(clashList, mergeDist, clearance).ToList();
             //─────────────────────────────────────────────
 
             /* --- 3.1   DataGrid с детализацией пересечений
