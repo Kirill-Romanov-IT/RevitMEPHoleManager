@@ -167,27 +167,11 @@ namespace RevitMEPHoleManager
                         if (targetSym == null)                    // если нет — дублируем "Копия1"
                         {
                             targetSym = holeSym.Duplicate(row.HoleTypeName) as FamilySymbol;
-
-                            // Функция SetParam
-                            void SetParam(FamilySymbol fs, string name, double mm)
-                            {
-                                Parameter p = fs.LookupParameter(name);
-                                if (p != null && !p.IsReadOnly)
-                                    p.Set(UnitUtils.ConvertToInternalUnits(
-                                            mm, UnitTypeId.Millimeters));
-                            }
-                            
-                            // Устанавливаем ширину
-                            SetParam(targetSym, "W", row.HoleWidthMm);       
-                            SetParam(targetSym, "Width", row.HoleWidthMm);
-                            SetParam(targetSym, "B", row.HoleWidthMm);       
-                            SetParam(targetSym, "HoleWidth", row.HoleWidthMm);
-                            
-                            // Устанавливаем высоту
-                            SetParam(targetSym, "H", row.HoleHeightMm);       
-                            SetParam(targetSym, "Height", row.HoleHeightMm);
-                            SetParam(targetSym, "HoleHeight", row.HoleHeightMm);
                         }
+                        
+                        // Устанавливаем размеры
+                        SetSize(targetSym, row.HoleWidthMm, row.HoleHeightMm);
+                        
                         typeCache[row.HoleTypeName] = targetSym;
                     }
 
@@ -303,6 +287,37 @@ namespace RevitMEPHoleManager
 
             MessageBox.Show($"Вставлено отверстий: {placed}",
                             "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// Универсальная установка размеров типоразмера семейства
+        /// </summary>
+        void SetSize(FamilySymbol fs, double wMm, double hMm)
+        {
+            // 1️⃣ Width
+            Parameter pW = fs.get_Parameter(BuiltInParameter.GENERIC_WIDTH) ??
+                           FindByNames(fs, "Width", "W", "B", "HoleWidth", "Ширина");
+            if (pW != null && !pW.IsReadOnly)
+                pW.Set(UnitUtils.ConvertToInternalUnits(wMm, UnitTypeId.Millimeters));
+
+            // 2️⃣ Height
+            Parameter pH = fs.get_Parameter(BuiltInParameter.GENERIC_HEIGHT) ??
+                           FindByNames(fs, "Height", "H", "HoleHeight", "Высота");
+            if (pH != null && !pH.IsReadOnly)
+                pH.Set(UnitUtils.ConvertToInternalUnits(hMm, UnitTypeId.Millimeters));
+        }
+
+        /// <summary>
+        /// Служебный поиск параметра по списку имён
+        /// </summary>
+        Parameter FindByNames(FamilySymbol fs, params string[] names)
+        {
+            foreach (string n in names)
+            {
+                Parameter p = fs.LookupParameter(n);
+                if (p != null) return p;
+            }
+            return null;
         }
     }
 }
