@@ -28,9 +28,12 @@ namespace RevitMEPHoleManager
         public string HoleTypeName { get; set; }
 
         // ▼ NEW для кластеризации --------------------------------------
-        public XYZ Center { get; set; }   // координата центра, футы
+        public XYZ Center { get; set; }      // уже есть – центр конкретного MEP
+        public XYZ GroupCtr { get; set; }     // ⬅ будет заполнен для «кустов»
         public bool IsMerged { get; set; }   // true, если это кластер
         public Guid ClusterId { get; set; }   // Id кластера
+        public double CenterXft { get; set; }      // X-координата центра (футы)
+        public double CenterYft { get; set; }      // Y-координата центра (футы)
         public double CenterZft { get; set; }      // удобнее, чем XYZ Center
         public double? GapMm { get; set; }   // расстояние до соседа (< mergeDist) либо null
         // ---------------------------------------------------------------
@@ -90,61 +93,15 @@ namespace RevitMEPHoleManager
 
                     if (!Intersects(hBox, bbHost, out XYZ center)) continue;
 
-                    bool isRound = false;
-                    string mepLbl, shapeLbl;
+                    if (!SizeHelper.TryGetSizes(mep, out double elemW, out double elemH, out ShapeKind kind))
+                        continue; // элемент без размеров пропускаем
 
-                    switch ((BuiltInCategory)mep.Category.Id.IntegerValue)
-                    {
-                        case BuiltInCategory.OST_PipeCurves:
-                            isRound = true; mepLbl = "Труба"; break;
-
-                        case BuiltInCategory.OST_DuctCurves:
-                            var t = mep.Document.GetElement(mep.GetTypeId()) as MEPCurveType;
-                            isRound = t?.Shape == ConnectorProfileType.Round;
-                            mepLbl = "Воздуховод"; break;
-
-                        case BuiltInCategory.OST_CableTray:
-                            mepLbl = "Лоток"; break;
-
-                        default:
-                            mepLbl = "—"; break;
-                    }
-
-                    shapeLbl = isRound ? "Круг" : "Прямоуг.";
-
-                    if (isWall) { if (isRound) wRnd++; else wRec++; }
-                    if (isFloor) { if (isRound) fRnd++; else fRec++; }
-
-                    // сводка по конкретному хосту
-                    if (!hostDict.TryGetValue(host.Id.IntegerValue, out var hs))
-                    {
-                        hs = new HostStatRow
-                        {
-                            HostId = host.Id.IntegerValue,
-                            HostName = hostLbl
-                        };
-                        hostDict.Add(hs.HostId, hs);
-                    }
-                    if (isRound) hs.Round++; else hs.Rect++;
-
-                    // размеры трассы
-                    double elemW = 0, elemH = 0;
-                    if (isRound && SizeHelper.TryGetRoundDiameter(mep, out double d))
-                    {
-                        elemW = elemH = d;
-                    }
-                    else if (!isRound && SizeHelper.TryGetRectSize(mep, out double w, out double h))
-                    {
-                        elemW = w; elemH = h;
-                    }
-
-                    // размеры в футах для MBR расчётов
-                    double widthFt = UnitUtils.ConvertToInternalUnits(elemW, UnitTypeId.Millimeters);
-                    double heightFt = UnitUtils.ConvertToInternalUnits(elemH, UnitTypeId.Millimeters);
+                    double wFt = UnitUtils.ConvertToInternalUnits(elemW, UnitTypeId.Millimeters);
+                    double hFt = UnitUtils.ConvertToInternalUnits(elemH, UnitTypeId.Millimeters);
 
                     // размеры отверстия
                     Calculaters.GetHoleSize(
-                        isRound,
+                        kind == ShapeKind.Round,
                         elemW,
                         elemH,
                         clearanceMm,
@@ -156,25 +113,20 @@ namespace RevitMEPHoleManager
                     {
                         HostId = host.Id.IntegerValue,
                         MepId = mep.Id.IntegerValue,
-
                         Host = hostLbl,
-                        Mep = mepLbl,
-                        Shape = shapeLbl,
-
+                        Mep = mep.Category.Name,
+                        Shape = kind.ToString(),
+                        WidthFt = wFt,
+                        HeightFt = hFt,
+                        Center = center,
+                        CenterXft = center.X,
+                        CenterYft = center.Y,
+                        CenterZft = center.Z,
                         ElemWidthMm = elemW,
                         ElemHeightMm = elemH,
-
-                        WidthFt = widthFt,
-                        HeightFt = heightFt,
-
                         HoleWidthMm = holeW,
                         HoleHeightMm = holeH,
-                        HoleTypeName = holeType,
-
-                        Center = center,
-                        CenterZft = center.Z,
-                        IsMerged = false,
-                        ClusterId = Guid.Empty
+                        HoleTypeName = holeType
                     });
                 }
             }

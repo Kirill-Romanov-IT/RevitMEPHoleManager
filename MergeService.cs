@@ -83,49 +83,50 @@ namespace RevitMEPHoleManager
         {
             const double ftPerMm = 1 / 304.8;
 
-            /* ── границы кластера (как было) ───────────────────────────────── */
-            double minX = cluster.Min(r => r.Center.X - r.WidthFt / 2);
-            double maxX = cluster.Max(r => r.Center.X + r.WidthFt / 2);
-            double minY = cluster.Min(r => r.Center.Y - r.HeightFt / 2);
-            double maxY = cluster.Max(r => r.Center.Y + r.HeightFt / 2);
+            /* ➊  Сортируем по горизонтальной оси стены (X) */
+            var byX = cluster.OrderBy(r => r.Center.X).ToList();
 
-            double holeWmm = (maxY - minY) / ftPerMm + clearanceMm;   // ширина (Y)
-            double holeHmm = (maxX - minX) / ftPerMm + clearanceMm;   // высота  (X)
+            double sumWidthFt = 0;
+            double sumGapsFt = 0;
 
-            /* ── GapMm уже вычислен до объединения ─────────────────────── */
-            double? gapMm = cluster.FirstOrDefault(r => r.GapMm.HasValue)?.GapMm;
-
-            /* ── Центр кластера (среднее геометрическое центров) ──────────── */
-            double centerX = cluster.Average(r => r.Center.X);
-            double centerY = cluster.Average(r => r.Center.Y);
-            double centerZ = cluster.Average(r => r.Center.Z);
-
-            /* ── собираем итоговую строку ─────────────────────────────────── */
-            var row = cluster[0];
-            return new IntersectRow
+            for (int i = 0; i < byX.Count; i++)
             {
-                HostId = row.HostId,
-                MepId = row.MepId,
-                Host = row.Host,
-                Mep = "Кластер",
-                Shape = "Прямоуг.",
+                double wFt = byX[i].WidthFt;           // DN или ширина лотка
+                sumWidthFt += wFt;
 
-                ElemWidthMm = row.ElemWidthMm,  // сохраняем оригинальные для отображения
-                ElemHeightMm = row.ElemHeightMm,
+                if (i < byX.Count - 1)
+                {
+                    double rightEdge = byX[i].Center.X + wFt / 2;
+                    double leftEdge = byX[i + 1].Center.X - byX[i + 1].WidthFt / 2;
+                    double gapFt = leftEdge - rightEdge;          // «чистый» зазор
+                    sumGapsFt += Math.Max(gapFt, 0);
+                }
+            }
 
-                WidthFt = (maxX - minX),   // общая ширина кластера в футах
-                HeightFt = (maxY - minY),  // общая высота кластера в футах
+            /* ➋  Высота – берём максимальную + зазор */
+            double maxHeightFt = cluster.Max(r => r.HeightFt);
+            double holeHmm = maxHeightFt / ftPerMm + clearanceMm;
 
-                HoleWidthMm = holeWmm,
-                HoleHeightMm = holeHmm,
-                HoleTypeName = SafeTypeName(holeWmm, holeHmm),   // «350x200»
+            /* ➌  Ширина – сумма Ø + зазоры + единый clearance */
+            double holeWmm = (sumWidthFt + sumGapsFt) / ftPerMm + clearanceMm;
 
-                Center = new XYZ(centerX, centerY, centerZ),
-                CenterZft = centerZ,
-                GapMm = gapMm,        // покажем в гриде
-                IsMerged = true,
-                ClusterId = Guid.NewGuid()
-            };
+            /* ➍  Центр группы (по X) */
+            double minX = byX.First().Center.X - byX.First().WidthFt / 2;
+            double maxX = byX.Last().Center.X + byX.Last().WidthFt / 2;
+            double ctrX = (minX + maxX) / 2;
+            double ctrY = cluster.Average(r => r.Center.Y);
+            double ctrZ = cluster.Average(r => r.Center.Z);
+            XYZ groupCtr = new XYZ(ctrX, ctrY, ctrZ);
+
+            /* ➎  Заполняем строку */
+            var row = byX[0];
+            row.IsMerged = true;
+            row.HoleWidthMm = holeWmm;
+            row.HoleHeightMm = holeHmm;
+            row.HoleTypeName = SafeTypeName(holeWmm, holeHmm);   // «350x200»
+            row.GroupCtr = groupCtr;                         // ⬅ новый центр
+
+            return row;
         }
 
 

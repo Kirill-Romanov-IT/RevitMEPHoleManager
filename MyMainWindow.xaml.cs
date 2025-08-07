@@ -249,7 +249,7 @@ namespace RevitMEPHoleManager
                                       .FirstOrDefault();
                     }
 
-                    XYZ clashPt = row.Center;
+                    XYZ clashPt = row.GroupCtr ?? row.Center;
                     Face face = null; XYZ pOnFace = null; UV uv = null;
                     foreach (GeometryObject go in host.get_Geometry(opt))
                     {
