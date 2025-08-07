@@ -118,6 +118,7 @@ namespace RevitMEPHoleManager
                 HoleTypeName = holeType,
 
                 Center = new XYZ(centerX, centerY, centerZ),
+                CenterZft = centerZ,
                 IsMerged = true,
                 ClusterId = Guid.NewGuid()
             };

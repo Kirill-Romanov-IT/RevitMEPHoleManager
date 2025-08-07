@@ -155,46 +155,71 @@ namespace RevitMEPHoleManager
 
                 foreach (var row in clashList)          // список уже после Merge
                 {
-                    // ── 4.2 получаем (или создаём) нужный FamilySymbol ──
-                    if (!typeCache.TryGetValue(row.HoleTypeName, out FamilySymbol sym))
+                    // ── 4.2 получаем (или создаём) FamilySymbol с именем row.HoleTypeName ──
+                    FamilySymbol targetSym;
+                    if (!typeCache.TryGetValue(row.HoleTypeName, out targetSym))
                     {
-                        sym = family.GetFamilySymbolIds()
-                                     .Select(id => doc.GetElement(id) as FamilySymbol)
-                                     .FirstOrDefault(s => s.Name.Equals(row.HoleTypeName,
-                                                                        StringComparison.OrdinalIgnoreCase));
+                        targetSym = family.GetFamilySymbolIds()
+                                          .Select(id => doc.GetElement(id) as FamilySymbol)
+                                          .FirstOrDefault(s => s.Name.Equals(row.HoleTypeName,
+                                                                             StringComparison.OrdinalIgnoreCase));
 
-                        if (sym == null)                           // нет → дублируем базовый
+                        if (targetSym == null)                    // если нет — дублируем "Копия1"
                         {
-                            sym = baseSym.Duplicate(row.HoleTypeName) as FamilySymbol;
+                            targetSym = holeSym.Duplicate(row.HoleTypeName) as FamilySymbol;
 
-                            // задаём параметры W / H
-                            void SetParam(string pName, double mm)
+                            // Функция SetParam
+                            void SetParam(FamilySymbol fs, string name, double mm)
                             {
-                                Parameter p = sym.LookupParameter(pName);
+                                Parameter p = fs.LookupParameter(name);
                                 if (p != null && !p.IsReadOnly)
                                     p.Set(UnitUtils.ConvertToInternalUnits(
                                             mm, UnitTypeId.Millimeters));
                             }
                             
                             // Устанавливаем ширину
-                            SetParam("W", row.HoleWidthMm);       
-                            SetParam("Width", row.HoleWidthMm);
-                            SetParam("B", row.HoleWidthMm);       
-                            SetParam("HoleWidth", row.HoleWidthMm);
+                            SetParam(targetSym, "W", row.HoleWidthMm);       
+                            SetParam(targetSym, "Width", row.HoleWidthMm);
+                            SetParam(targetSym, "B", row.HoleWidthMm);       
+                            SetParam(targetSym, "HoleWidth", row.HoleWidthMm);
                             
                             // Устанавливаем высоту
-                            SetParam("H", row.HoleHeightMm);       
-                            SetParam("Height", row.HoleHeightMm);
-                            SetParam("HoleHeight", row.HoleHeightMm);
+                            SetParam(targetSym, "H", row.HoleHeightMm);       
+                            SetParam(targetSym, "Height", row.HoleHeightMm);
+                            SetParam(targetSym, "HoleHeight", row.HoleHeightMm);
                         }
-                        typeCache[row.HoleTypeName] = sym;
+                        typeCache[row.HoleTypeName] = targetSym;
                     }
-
-                    if (!sym.IsActive) sym.Activate();
 
                     // ── 4.3 вставляем отверстие ──
                     Element host = doc.GetElement(new ElementId(row.HostId));
                     if (host == null) continue;
+
+                    Level hostLvl = null;
+
+                    // Стены
+                    if (host is Wall)
+                    {
+                        var baseP = host.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT);
+                        if (baseP != null) hostLvl = doc.GetElement(baseP.AsElementId()) as Level;
+                    }
+                    // Плиты
+                    if (hostLvl == null && host is Floor)
+                    {
+                        var lvlP = host.get_Parameter(BuiltInParameter.LEVEL_PARAM);
+                        if (lvlP != null) hostLvl = doc.GetElement(lvlP.AsElementId()) as Level;
+                    }
+
+                    // Фолбэк — ближайший уровень по Z
+                    if (hostLvl == null)
+                    {
+                        double z = row.CenterZft;
+                        hostLvl = new FilteredElementCollector(doc)
+                                      .OfClass(typeof(Level))
+                                      .Cast<Level>()
+                                      .OrderBy(l => Math.Abs(l.Elevation - z))
+                                      .FirstOrDefault();
+                    }
 
                     XYZ clashPt = row.Center;
                     Face face = null; XYZ pOnFace = null; UV uv = null;
@@ -218,11 +243,59 @@ namespace RevitMEPHoleManager
 
                     XYZ placePt = pOnFace;                             // прямо на грань
 
-                    // перегрузка для face-based семейств
-                    doc.Create.NewFamilyInstance(face.Reference,        // host-face
-                                                 placePt,               // точка на грани
-                                                 refDir, sym);
+                    // ➊ вставляем face-based экземпляр базовым символом (Копия1)
+                    FamilyInstance inst = doc.Create.NewFamilyInstance(face.Reference,
+                                                                       placePt, refDir, holeSym);
+
+                    // ➋ переключаем на нужный тип
+                    if (!targetSym.IsActive) targetSym.Activate();   // важно до смены
+                    inst.ChangeTypeId(targetSym.Id);
                     placed++;
+
+                    // ── 4.4 Уровень спецификации ──
+                    if (hostLvl == null) continue;
+
+                    Parameter pLvl = null;
+
+                    // ➊ пробуем «известные» BuiltInParameter
+                    BuiltInParameter[] cand =
+                    {
+                        BuiltInParameter.SCHEDULE_LEVEL_PARAM,              // ≤ 2023
+                        BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM,// 2024+
+                        BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM
+                    };
+                    foreach (var bip in cand)
+                    {
+                        pLvl = inst.get_Parameter(bip);
+                        if (pLvl != null) break;
+                    }
+
+                    // ➋ fallback: первый параметр-ElementId, где значение – Level
+                    if (pLvl == null)
+                    {
+                        foreach (Parameter p in inst.Parameters)
+                        {
+                            if (p.StorageType != StorageType.ElementId || p.IsReadOnly) continue;
+                            Element lvlElem = doc.GetElement(p.AsElementId());
+                            if (lvlElem == null || lvlElem is Level) { pLvl = p; break; }
+                        }
+                    }
+
+                    // ➌ запись
+                    if (pLvl != null && !pLvl.IsReadOnly)
+                        pLvl.Set(hostLvl.Id);
+
+                    // ── 4.5 Отметка от уровня ──
+                    Parameter pOff = inst.get_Parameter(BuiltInParameter.INSTANCE_ELEVATION_PARAM) ??
+                                     inst.LookupParameter("Отметка от уровня") ??
+                                     inst.LookupParameter("Offset");
+                    if (pOff != null && hostLvl != null && !pOff.IsReadOnly)
+                    {
+                        double halfHft = UnitUtils.ConvertToInternalUnits(
+                                             row.HoleHeightMm / 2.0, UnitTypeId.Millimeters);
+                        double offset = row.CenterZft - hostLvl.Elevation - halfHft;
+                        pOff.Set(offset);                               // футы
+                    }
                 }
 
                 tr.Commit();

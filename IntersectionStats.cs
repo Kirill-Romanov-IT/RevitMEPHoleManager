@@ -28,6 +28,7 @@ namespace RevitMEPHoleManager
         public XYZ Center { get; set; }   // координата центра, футы
         public bool IsMerged { get; set; }   // true, если это кластер
         public Guid ClusterId { get; set; }   // Id кластера
+        public double CenterZft { get; set; }      // удобнее, чем XYZ Center
         // ---------------------------------------------------------------
     }
 
@@ -160,6 +161,7 @@ namespace RevitMEPHoleManager
                         HoleTypeName = holeType,
 
                         Center = center,
+                        CenterZft = center.Z,
                         IsMerged = false,
                         ClusterId = Guid.Empty
                     });
