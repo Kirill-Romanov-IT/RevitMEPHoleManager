@@ -20,6 +20,9 @@ namespace RevitMEPHoleManager
         public double ElemWidthMm { get; set; }   // Габариты трассы
         public double ElemHeightMm { get; set; }
 
+        public double WidthFt { get; set; }   // DN-Ø или ширина лотка  (футы)
+        public double HeightFt { get; set; }   // DN-Ø или высота лотка (футы)
+
         public double HoleWidthMm { get; set; }   // Итоговые габариты отверстия
         public double HoleHeightMm { get; set; }
         public string HoleTypeName { get; set; }
@@ -134,6 +137,10 @@ namespace RevitMEPHoleManager
                         elemW = w; elemH = h;
                     }
 
+                    // размеры в футах для MBR расчётов
+                    double widthFt = UnitUtils.ConvertToInternalUnits(elemW, UnitTypeId.Millimeters);
+                    double heightFt = UnitUtils.ConvertToInternalUnits(elemH, UnitTypeId.Millimeters);
+
                     // размеры отверстия
                     Calculaters.GetHoleSize(
                         isRound,
@@ -155,6 +162,9 @@ namespace RevitMEPHoleManager
 
                         ElemWidthMm = elemW,
                         ElemHeightMm = elemH,
+
+                        WidthFt = widthFt,
+                        HeightFt = heightFt,
 
                         HoleWidthMm = holeW,
                         HoleHeightMm = holeH,

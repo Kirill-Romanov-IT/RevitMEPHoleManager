@@ -81,26 +81,25 @@ namespace RevitMEPHoleManager
         /// <returns>Объединённая строка IntersectRow</returns>
         private static IntersectRow BuildMerged(List<IntersectRow> cluster, double clearanceMm)
         {
-            // ➊  Сумма «горизонтальных» размеров + максимальная высота
-            double elemW = cluster.Sum(r => r.ElemWidthMm);   // Ø трубы или ширина воздуховода
-            double elemH = cluster.Max(r => r.ElemHeightMm);  // высота (для круг. = Ø)
+            const double ftPerMm = 1 / 304.8;
 
-            // ➋  Пересчитываем отверстие (берём прямоугольное под группу)
-            Calculaters.GetHoleSize(
-                isRound: false,           // всегда прямоугольный проём
-                elemW,                    // вся «полка» труб
-                elemH,                    // самая высокая труба / лоток
-                clearanceMm,
-                out double holeW,
-                out double holeH,
-                out string holeType);
+            /* ➊  Находим крайние точки контура (DN/2 от центра) */
+            double minX = cluster.Min(r => r.Center.X - r.WidthFt / 2);
+            double maxX = cluster.Max(r => r.Center.X + r.WidthFt / 2);
 
-            // ➌  Центр кластера (среднее геометрическое центров)
+            double minY = cluster.Min(r => r.Center.Y - r.HeightFt / 2);
+            double maxY = cluster.Max(r => r.Center.Y + r.HeightFt / 2);
+
+            /* ➋  Футы → мм и добавляем ОДИН общий зазор */
+            double holeWmm = (maxY - minY) / ftPerMm + clearanceMm;   // стало: Y
+            double holeHmm = (maxX - minX) / ftPerMm + clearanceMm;   // стало: X
+
+            /* ➌  Центр кластера (среднее геометрическое центров) */
             double centerX = cluster.Average(r => r.Center.X);
             double centerY = cluster.Average(r => r.Center.Y);
             double centerZ = cluster.Average(r => r.Center.Z);
 
-            // ➍  Любой элемент кластера - за основу
+            /* ➍  Формируем строку-результат */
             var row = cluster[0];
             return new IntersectRow
             {
@@ -110,18 +109,34 @@ namespace RevitMEPHoleManager
                 Mep = "Кластер",
                 Shape = "Прямоуг.",
 
-                ElemWidthMm = elemW,
-                ElemHeightMm = elemH,
+                ElemWidthMm = row.ElemWidthMm,  // сохраняем оригинальные для отображения
+                ElemHeightMm = row.ElemHeightMm,
 
-                HoleWidthMm = holeW,
-                HoleHeightMm = holeH,
-                HoleTypeName = holeType,
+                WidthFt = (maxX - minX),   // общая ширина кластера в футах
+                HeightFt = (maxY - minY),  // общая высота кластера в футах
+
+                HoleWidthMm = holeWmm,
+                HoleHeightMm = holeHmm,
+                HoleTypeName = SafeTypeName(holeWmm, holeHmm),   // «350x200»
 
                 Center = new XYZ(centerX, centerY, centerZ),
                 CenterZft = centerZ,
                 IsMerged = true,
                 ClusterId = Guid.NewGuid()
             };
+        }
+
+
+
+        /// <summary>
+        /// Создаёт безопасное имя типоразмера для семейства
+        /// </summary>
+        private static string SafeTypeName(double wMm, double hMm)
+        {
+            // Округляем до целых и убираем спецсимволы
+            int w = (int)Math.Ceiling(wMm);
+            int h = (int)Math.Ceiling(hMm);
+            return $"{w}x{h}";  // ASCII символы для совместимости
         }
     }
 }
