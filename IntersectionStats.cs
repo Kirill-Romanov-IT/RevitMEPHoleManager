@@ -1,11 +1,12 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
 
 namespace RevitMEPHoleManager
 {
     /// <summary>
-    /// Одна строка для таблицы пересечений.
+    /// Одна строка для таблицы пересечений + координата центра.
     /// </summary>
     internal class IntersectRow
     {
@@ -21,8 +22,13 @@ namespace RevitMEPHoleManager
 
         public double HoleWidthMm { get; set; }   // Итоговые габариты отверстия
         public double HoleHeightMm { get; set; }
+        public string HoleTypeName { get; set; }
 
-        public string HoleTypeName { get; set; }   // Имя типоразмера (семейства)
+        // ▼ NEW для кластеризации --------------------------------------
+        public XYZ Center { get; set; }   // координата центра, футы
+        public bool IsMerged { get; set; }   // true, если это кластер
+        public Guid ClusterId { get; set; }   // Id кластера
+        // ---------------------------------------------------------------
     }
 
     /// <summary>
@@ -38,12 +44,23 @@ namespace RevitMEPHoleManager
         {
             int wRnd = 0, wRec = 0, fRnd = 0, fRec = 0;
             var rows = new List<IntersectRow>();
-            var hostDict = new Dictionary<int, HostStatRow>();   // HostId → сводка
+            var hostDict = new Dictionary<int, HostStatRow>();
 
-            bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b) =>
-                !(a.Max.X < b.Min.X || a.Min.X > b.Max.X ||
-                  a.Max.Y < b.Min.Y || a.Min.Y > b.Max.Y ||
-                  a.Max.Z < b.Min.Z || a.Min.Z > b.Max.Z);
+            // пересекаются ли два bounding‑box'а
+            bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ ctr)
+            {
+                double minX = Math.Max(a.Min.X, b.Min.X);
+                double minY = Math.Max(a.Min.Y, b.Min.Y);
+                double minZ = Math.Max(a.Min.Z, b.Min.Z);
+                double maxX = Math.Min(a.Max.X, b.Max.X);
+                double maxY = Math.Min(a.Max.Y, b.Max.Y);
+                double maxZ = Math.Min(a.Max.Z, b.Max.Z);
+                bool hit = (minX <= maxX) && (minY <= maxY) && (minZ <= maxZ);
+                ctr = hit ? new XYZ((minX + maxX) / 2,
+                                    (minY + maxY) / 2,
+                                    (minZ + maxZ) / 2) : null;
+                return hit;
+            }
 
             foreach (Element host in hosts)
             {
@@ -59,14 +76,14 @@ namespace RevitMEPHoleManager
                     var bb = mep.get_BoundingBox(null);
                     if (bb == null) continue;
 
-                    // bb MEP → координаты хоста
+                    // bb → координаты хоста
                     var bbHost = new BoundingBoxXYZ
                     {
                         Min = tx.OfPoint(bb.Min),
                         Max = tx.OfPoint(bb.Max)
                     };
 
-                    if (!Intersects(hBox, bbHost)) continue;
+                    if (!Intersects(hBox, bbHost, out XYZ center)) continue;
 
                     bool isRound = false;
                     string mepLbl, shapeLbl;
@@ -93,7 +110,7 @@ namespace RevitMEPHoleManager
                     if (isWall) { if (isRound) wRnd++; else wRec++; }
                     if (isFloor) { if (isRound) fRnd++; else fRec++; }
 
-                    // ── обновляем счётчик по конкретному хосту ──
+                    // сводка по конкретному хосту
                     if (!hostDict.TryGetValue(host.Id.IntegerValue, out var hs))
                     {
                         hs = new HostStatRow
@@ -105,19 +122,18 @@ namespace RevitMEPHoleManager
                     }
                     if (isRound) hs.Round++; else hs.Rect++;
 
-                    // --- исходные размеры трассы ---
+                    // размеры трассы
                     double elemW = 0, elemH = 0;
                     if (isRound && SizeHelper.TryGetRoundDiameter(mep, out double d))
                     {
                         elemW = elemH = d;
                     }
-                    else if (!isRound &&
-                             SizeHelper.TryGetRectSize(mep, out double w, out double h))
+                    else if (!isRound && SizeHelper.TryGetRectSize(mep, out double w, out double h))
                     {
                         elemW = w; elemH = h;
                     }
 
-                    // размеры готового отверстия
+                    // размеры отверстия
                     Calculaters.GetHoleSize(
                         isRound,
                         elemW,
@@ -141,7 +157,11 @@ namespace RevitMEPHoleManager
 
                         HoleWidthMm = holeW,
                         HoleHeightMm = holeH,
-                        HoleTypeName = holeType
+                        HoleTypeName = holeType,
+
+                        Center = center,
+                        IsMerged = false,
+                        ClusterId = Guid.Empty
                     });
                 }
             }

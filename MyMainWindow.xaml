@@ -48,12 +48,29 @@
 
                 <!-- правая колонка -->
                 <StackPanel Grid.Column="1" Margin="10">
-                    <TextBlock Text="Зазор вокруг элемента (мм):" Margin="0,0,0,5"/>
-                    <TextBox x:Name="ClearanceBox" Height="25"/>
 
-                    <TextBlock Text="Объединять отверстия — макс. расстояние (мм):"
-                               Margin="0,20,0,5"/>
-                    <TextBox x:Name="MergeDistBox" Height="25"/>
+                    
+                    <TextBlock Text="Зазор вокруг элемента (мм):" Margin="0,0,0,5"/>
+                    <TextBox  x:Name="ClearanceBox" Height="25"/>
+
+                    
+                  
+                    <StackPanel Orientation="Horizontal" Margin="0,20,0,5">
+                        <!-- чек-бокс -->
+                        <CheckBox x:Name="EnableMergeChk"
+                  Content="Объединять отверстия"
+                  VerticalAlignment="Center"/>
+                        <!-- подпись после чек-бокса -->
+                        <TextBlock Text=" — макс. расстояние (мм):"
+                   Margin="6,0,0,0"
+                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- само числовое поле -->
+                    <TextBox x:Name="MergeDistBox"
+             Height="25"
+             IsEnabled="{Binding IsChecked, ElementName=EnableMergeChk}"/>
+
                 </StackPanel>
             </Grid>
 

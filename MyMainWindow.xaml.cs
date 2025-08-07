@@ -20,9 +20,9 @@ namespace RevitMEPHoleManager
             PopulateGenericModelFamilies();
         }
 
-        // ────────────────────────────────────────────────
-        //  ComboBox: все семейства Generic Model (face-based)
-        // ────────────────────────────────────────────────
+        //────────────────────────────────────────────────
+        //  ComboBox: все семейства Generic Model (face‑based)
+        //────────────────────────────────────────────────
         private void PopulateGenericModelFamilies()
         {
             Document doc = _uiApp.ActiveUIDocument.Document;
@@ -43,9 +43,9 @@ namespace RevitMEPHoleManager
             if (list.Count > 0) FamilyCombo.SelectedIndex = 0;
         }
 
-        // ────────────────────────────────────────────────
+        //────────────────────────────────────────────────
         //  Старт
-        // ────────────────────────────────────────────────
+        //────────────────────────────────────────────────
         private void StartButton_Click(object sender, RoutedEventArgs e)
         {
             Document doc = _uiApp.ActiveUIDocument.Document;
@@ -53,11 +53,11 @@ namespace RevitMEPHoleManager
             // 0. проверяем выбранное семейство
             if (FamilyCombo.SelectedValue == null)
             {
-                MessageBox.Show("Сначала выберите face-based семейство Generic Model.");
+                MessageBox.Show("Сначала выберите face‑based семейство Generic Model.");
                 return;
             }
 
-            // ── гарантируем тип «Копия1» ──
+            //── гарантируем тип «Копия1» ──
             const string NEW_TYPE = "Копия1";
             Family family = doc.GetElement((ElementId)FamilyCombo.SelectedValue) as Family;
             FamilySymbol baseSym = doc.GetElement(family.GetFamilySymbolIds().First()) as FamilySymbol;
@@ -75,14 +75,14 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            // ── 1. хост-элементы: стены + перекрытия ──
+            //── 1. хост‑элементы: стены + перекрытия ──
             IList<Element> hostElems = new FilteredElementCollector(doc)
                 .WherePasses(new LogicalOrFilter(
                                 new ElementClassFilter(typeof(Wall)),
                                 new ElementClassFilter(typeof(Floor))))
                 .ToElements();
 
-            // ── 2. собираем MEP из хоста и всех связей ──
+            //── 2. собираем MEP из хоста и всех связей ──
             ElementFilter fPipe = new ElementCategoryFilter(BuiltInCategory.OST_PipeCurves);
             ElementFilter fDuct = new ElementCategoryFilter(BuiltInCategory.OST_DuctCurves);
             ElementFilter fTray = new ElementCategoryFilter(BuiltInCategory.OST_CableTray);
@@ -107,7 +107,7 @@ namespace RevitMEPHoleManager
                     mepList.Add((mep, lTx));
             }
 
-            // ── 3. анализ пересечений ──
+            //── 3. анализ пересечений ──
             double clearance = 50;
             if (double.TryParse(ClearanceBox.Text, out double cTmp) && cTmp > 0)
                 clearance = cTmp;
@@ -115,37 +115,34 @@ namespace RevitMEPHoleManager
             var (wRnd, wRec, fRnd, fRec, clashList, hostStats) =
                 IntersectionStats.Analyze(hostElems, mepList, clearance);
 
+            //─────────────────────────────────────────────
+            // 3‑A. ОБЪЕДИНЯЕМ ОТВЕРСТИЯ (новый код)
+            //─────────────────────────────────────────────
+            bool mergeOn = EnableMergeChk.IsChecked == true;
+            double mergeDist = 0;
+            if (mergeOn && double.TryParse(MergeDistBox.Text, out double mTmp) && mTmp > 0)
+                mergeDist = mTmp;       // мм
+
+            if (mergeOn && mergeDist > 0)
+                clashList = MergeService.Merge(clashList, mergeDist).ToList();
+            //─────────────────────────────────────────────
+
             /* --- 3.1   DataGrid с детализацией пересечений
              *            + группировка по HostId            --- */
             var cvs = new CollectionViewSource { Source = clashList };
-            cvs.GroupDescriptions.Add(new PropertyGroupDescription("HostId")); // Группируем
+            cvs.GroupDescriptions.Add(new PropertyGroupDescription("HostId"));
             StatsGrid.ItemsSource = cvs.View;
 
             /* --- 3.2   (необязательно) вторая таблица
              *            со сводкой по хостам              --- */
-            HostStatsGrid.ItemsSource = hostStats;          // <— см. XAML ниже
+            HostStatsGrid.ItemsSource = hostStats;
 
-            // 3.3. всплывающее окно-сводка
+            // 3.3. всплывающее окно‑сводка
             TaskDialog.Show("Статистика пересечений",
                 $"В стенах:\n  • круглые   — {wRnd}\n  • квадратные — {wRec}\n\n" +
                 $"В перекрытиях:\n  • круглые   — {fRnd}\n  • квадратные — {fRec}");
 
-            // ── 4. вставка отверстий ──
-            bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ ctr)
-            {
-                double minX = Math.Max(a.Min.X, b.Min.X);
-                double minY = Math.Max(a.Min.Y, b.Min.Y);
-                double minZ = Math.Max(a.Min.Z, b.Min.Z);
-                double maxX = Math.Min(a.Max.X, b.Max.X);
-                double maxY = Math.Min(a.Max.Y, b.Max.Y);
-                double maxZ = Math.Min(a.Max.Z, b.Max.Z);
-                bool hit = (minX <= maxX) && (minY <= maxY) && (minZ <= maxZ);
-                ctr = hit ? new XYZ((minX + maxX) / 2,
-                                    (minY + maxY) / 2,
-                                    (minZ + maxZ) / 2) : null;
-                return hit;
-            }
-
+            //── 4. вставка отверстий ──
             int placed = 0;
             Options opt = new Options { ComputeReferences = true };
 
@@ -154,59 +151,44 @@ namespace RevitMEPHoleManager
                 tr.Start();
                 if (!holeSym.IsActive) holeSym.Activate();
 
-                foreach (Element host in hostElems)
+                foreach (var row in clashList)                      // ← уже с учётом merge
                 {
-                    BoundingBoxXYZ hBox = host.get_BoundingBox(null); if (hBox == null) continue;
+                    Element host = doc.GetElement(new ElementId(row.HostId));
+                    if (host == null) continue;
 
-                    foreach ((Element mepElem, Transform tx) in mepList)
+                    XYZ clashPt = row.Center;                       // точка пересечения
+
+                    // Находим ближайшее лицо хоста
+                    Face face = null; XYZ pOnFace = null; UV uv = null;
+                    foreach (GeometryObject go in host.get_Geometry(opt))
                     {
-                        BoundingBoxXYZ bb = mepElem.get_BoundingBox(null); if (bb == null) continue;
-
-                        // bb → локальные координаты хоста
-                        BoundingBoxXYZ bbHost = new BoundingBoxXYZ
-                        {
-                            Min = tx.OfPoint(bb.Min),
-                            Max = tx.OfPoint(bb.Max)
-                        };
-
-                        if (!Intersects(hBox, bbHost, out XYZ clashPt)) continue;
-
-                        // ищем подходящую грань
-                        Face face = null; XYZ pOnFace = null; UV uv = null;
-                        foreach (GeometryObject go in host.get_Geometry(opt))
-                        {
-                            if (go is Solid s)
-                                foreach (Face f in s.Faces)
-                                {
-                                    var pr = f.Project(clashPt);
-                                    if (pr != null) { face = f; pOnFace = pr.XYZPoint; uv = pr.UVPoint; break; }
-                                }
-                            if (face != null) break;
-                        }
-                        if (face == null) continue;
-
-                        // ориентация отверстия
-                        XYZ normal = face.ComputeNormal(uv).Normalize();
-                        XYZ refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() < 1e-9
-                                   ? normal.CrossProduct(XYZ.BasisX)
-                                   : normal.CrossProduct(XYZ.BasisZ);
-                        refDir = refDir.Normalize();
-
-                        XYZ placePt = pOnFace + normal * (1.0 / 304.8);   // +1 мм наружу
-
-                        doc.Create.NewFamilyInstance(face.Reference, placePt, refDir, holeSym);
-                        placed++;
+                        if (go is Solid s)
+                            foreach (Face f in s.Faces)
+                            {
+                                var pr = f.Project(clashPt);
+                                if (pr != null) { face = f; pOnFace = pr.XYZPoint; uv = pr.UVPoint; break; }
+                            }
+                        if (face != null) break;
                     }
+                    if (face == null) continue;
+
+                    // ориентация, как раньше
+                    XYZ normal = face.ComputeNormal(uv).Normalize();
+                    XYZ refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() < 1e-9
+                               ? normal.CrossProduct(XYZ.BasisX)
+                               : normal.CrossProduct(XYZ.BasisZ);
+                    refDir = refDir.Normalize();
+
+                    XYZ placePt = pOnFace + normal * (1.0 / 304.8);   // +1 мм наружу
+
+                    doc.Create.NewFamilyInstance(face.Reference, placePt, refDir, holeSym);
+                    placed++;
                 }
                 tr.Commit();
             }
 
-            MessageBox.Show(
-                placed > 0 ? $"Вставлено отверстий: {placed}"
-                           : "Пересечений не найдено.",
-                "Результат",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            MessageBox.Show($"Вставлено отверстий: {placed}",
+                            "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 }
