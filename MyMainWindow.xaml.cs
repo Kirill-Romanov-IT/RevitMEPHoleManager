@@ -216,9 +216,12 @@ namespace RevitMEPHoleManager
                                : normal.CrossProduct(XYZ.BasisZ);
                     refDir = refDir.Normalize();
 
-                    XYZ placePt = pOnFace + normal * (1.0 / 304.8);   // +1 мм наружу
+                    XYZ placePt = pOnFace;                             // прямо на грань
 
-                    doc.Create.NewFamilyInstance(face.Reference, placePt, refDir, sym);
+                    // перегрузка для face-based семейств
+                    doc.Create.NewFamilyInstance(face.Reference,        // host-face
+                                                 placePt,               // точка на грани
+                                                 refDir, sym);
                     placed++;
                 }
 
