@@ -87,6 +87,7 @@
                     <DataGridTextColumn Header="Форма"         Binding="{Binding Shape}"  Width="75"/>
                     <DataGridTextColumn Header="Ø / Шир., мм"  Binding="{Binding ElemWidthMm, StringFormat=N0}"  Width="85"/>
                     <DataGridTextColumn Header="Высота, мм"    Binding="{Binding ElemHeightMm, StringFormat=N0}"  Width="85"/>
+                    <DataGridTextColumn Header="Расст., мм"    Binding="{Binding GapMm, StringFormat=F0}" Width="70"/>
                     <DataGridTextColumn Header="Отв. Шир., мм" Binding="{Binding HoleWidthMm, StringFormat=N0}"  Width="85"/>
                     <DataGridTextColumn Header="Отв. Выс., мм" Binding="{Binding HoleHeightMm, StringFormat=N0}" Width="85"/>
                     <DataGridTextColumn Header="Типоразмер"    Binding="{Binding HoleTypeName}" Width="120"/>

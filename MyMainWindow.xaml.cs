@@ -123,6 +123,50 @@ namespace RevitMEPHoleManager
             if (mergeOn && double.TryParse(MergeDistBox.Text, out double mTmp) && mTmp > 0)
                 mergeDist = mTmp;       // мм
 
+            // — вычисляем «чистый» зазор между наружными контурами —
+            if (mergeDist > 0)
+            {
+                double gapLimitFt = UnitUtils.ConvertToInternalUnits(mergeDist, UnitTypeId.Millimeters);
+
+                foreach (var grp in clashList.GroupBy(r => r.HostId))
+                {
+                    var rows = grp.ToList();
+
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        double minGapFt = double.MaxValue;
+
+                        for (int j = 0; j < rows.Count; j++)
+                        {
+                            if (i == j) continue;
+
+                            // ➊ расстояние между центрами
+                            double centerDistFt = rows[i].Center.DistanceTo(rows[j].Center);
+
+                            // ➋ радиусы (DN/2) в футах
+                            double r1 = rows[i].WidthFt / 2;   // widthFt вы заполняете в Analyze
+                            double r2 = rows[j].WidthFt / 2;
+
+                            // ➌ «чистый» зазор
+                            double gapFt = centerDistFt - (r1 + r2);
+
+                            if (gapFt < minGapFt) minGapFt = gapFt;
+                        }
+
+                        // ➍ если зазор меньше порога — показываем в гриде
+                        if (minGapFt < gapLimitFt)
+                        {
+                            rows[i].GapMm = Math.Round(
+                                UnitUtils.ConvertFromInternalUnits(minGapFt, UnitTypeId.Millimeters));
+                        }
+                        else
+                        {
+                            rows[i].GapMm = null;              // ячейка остаётся пустой
+                        }
+                    }
+                }
+            }
+
             if (mergeOn && mergeDist > 0)
                 clashList = MergeService.Merge(clashList, mergeDist, clearance).ToList();
             //─────────────────────────────────────────────

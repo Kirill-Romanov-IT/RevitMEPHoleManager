@@ -32,6 +32,7 @@ namespace RevitMEPHoleManager
         public bool IsMerged { get; set; }   // true, если это кластер
         public Guid ClusterId { get; set; }   // Id кластера
         public double CenterZft { get; set; }      // удобнее, чем XYZ Center
+        public double? GapMm { get; set; }   // расстояние до соседа (< mergeDist) либо null
         // ---------------------------------------------------------------
     }
 

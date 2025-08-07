@@ -83,23 +83,24 @@ namespace RevitMEPHoleManager
         {
             const double ftPerMm = 1 / 304.8;
 
-            /* ➊  Находим крайние точки контура (DN/2 от центра) */
+            /* ── границы кластера (как было) ───────────────────────────────── */
             double minX = cluster.Min(r => r.Center.X - r.WidthFt / 2);
             double maxX = cluster.Max(r => r.Center.X + r.WidthFt / 2);
-
             double minY = cluster.Min(r => r.Center.Y - r.HeightFt / 2);
             double maxY = cluster.Max(r => r.Center.Y + r.HeightFt / 2);
 
-            /* ➋  Футы → мм и добавляем ОДИН общий зазор */
-            double holeWmm = (maxY - minY) / ftPerMm + clearanceMm;   // стало: Y
-            double holeHmm = (maxX - minX) / ftPerMm + clearanceMm;   // стало: X
+            double holeWmm = (maxY - minY) / ftPerMm + clearanceMm;   // ширина (Y)
+            double holeHmm = (maxX - minX) / ftPerMm + clearanceMm;   // высота  (X)
 
-            /* ➌  Центр кластера (среднее геометрическое центров) */
+            /* ── GapMm уже вычислен до объединения ─────────────────────── */
+            double? gapMm = cluster.FirstOrDefault(r => r.GapMm.HasValue)?.GapMm;
+
+            /* ── Центр кластера (среднее геометрическое центров) ──────────── */
             double centerX = cluster.Average(r => r.Center.X);
             double centerY = cluster.Average(r => r.Center.Y);
             double centerZ = cluster.Average(r => r.Center.Z);
 
-            /* ➍  Формируем строку-результат */
+            /* ── собираем итоговую строку ─────────────────────────────────── */
             var row = cluster[0];
             return new IntersectRow
             {
@@ -121,6 +122,7 @@ namespace RevitMEPHoleManager
 
                 Center = new XYZ(centerX, centerY, centerZ),
                 CenterZft = centerZ,
+                GapMm = gapMm,        // покажем в гриде
                 IsMerged = true,
                 ClusterId = Guid.NewGuid()
             };
