@@ -29,6 +29,43 @@ namespace RevitMEPHoleManager
     {
         private readonly UIApplication _uiApp;
 
+        /// <summary>
+        /// Универсальный поиск подходящей грани хоста для размещения face-based семейства
+        /// </summary>
+        private static Reference PickHostFace(Document doc, Element host, XYZ pt, XYZ pipeDir)
+        {
+            IEnumerable<Reference> refs;
+
+            if (host is Floor floor)
+            {
+                // все верхние + нижние грани плиты
+                refs = HostObjectUtils.GetTopFaces(floor)
+                         .Concat(HostObjectUtils.GetBottomFaces(floor));
+            }
+            else if (host is Wall wall)
+            {
+                // внешние + внутренние грани стены
+                refs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior)
+                         .Concat(HostObjectUtils.GetSideFaces(wall, ShellLayerType.Interior));
+            }
+            else
+                throw new InvalidOperationException($"Неподдерживаемый тип хоста: {host.GetType().Name}");
+
+            // выбираем грань, чья нормаль максимально сонаправлена с осью трубы
+            var best = refs
+                .Select(r =>
+                {
+                    var face = (PlanarFace)host.GetGeometryObjectFromReference(r);
+                    double dot = Math.Abs(face.FaceNormal.Normalize()
+                                           .DotProduct(pipeDir.Normalize()));
+                    return (r, dot);
+                })
+                .OrderByDescending(t => t.dot)
+                .First().r;
+
+            return best;
+        }
+
         public MainWindow(UIApplication uiApp)
         {
             InitializeComponent();
@@ -305,29 +342,36 @@ namespace RevitMEPHoleManager
                     }
 
                     XYZ clashPt = row.GroupCtr ?? row.Center;
-                    Face face = null; XYZ pOnFace = null; UV uv = null;
-                    foreach (GeometryObject go in host.get_Geometry(opt))
+                    
+                    // ── 4.3.1 Выбираем подходящую грань хоста ──
+                    Reference faceRef;
+                    try
                     {
-                        if (go is Solid s)
-                            foreach (Face f in s.Faces)
-                            {
-                                var pr = f.Project(clashPt);
-                                if (pr != null) { face = f; pOnFace = pr.XYZPoint; uv = pr.UVPoint; break; }
-                            }
-                        if (face != null) break;
+                        faceRef = PickHostFace(doc, host, clashPt, row.PipeDir);
                     }
-                    if (face == null) continue;
+                    catch (Exception ex)
+                    {
+                        continue; // пропускаем, если не удалось найти подходящую грань
+                    }
 
-                    XYZ normal = face.ComputeNormal(uv).Normalize();
-                    XYZ refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() < 1e-9
-                               ? normal.CrossProduct(XYZ.BasisX)
-                               : normal.CrossProduct(XYZ.BasisZ);
+                    // получаем геометрию грани для расчета точки размещения
+                    var face = (PlanarFace)host.GetGeometryObjectFromReference(faceRef);
+                    var projection = face.Project(clashPt);
+                    if (projection == null) continue;
+                    
+                    XYZ placePt = projection.XYZPoint;
+                    XYZ normal = face.FaceNormal.Normalize();
+                    
+                    // направление размещения: проекция оси трубы на плоскость грани
+                    XYZ refDir = row.PipeDir - normal * row.PipeDir.DotProduct(normal);
+                    if (refDir.GetLength() < 1e-6)  // труба перпендикулярна грани
+                        refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() > 1e-6 
+                               ? normal.CrossProduct(XYZ.BasisZ) 
+                               : normal.CrossProduct(XYZ.BasisX);
                     refDir = refDir.Normalize();
 
-                    XYZ placePt = pOnFace;                             // прямо на грань
-
                     // ➊ вставляем face-based экземпляр базовым символом (Копия1)
-                    FamilyInstance inst = doc.Create.NewFamilyInstance(face.Reference,
+                    FamilyInstance inst = doc.Create.NewFamilyInstance(faceRef,
                                                                        placePt, refDir, holeSym);
 
                     // ➋ переключаем на нужный тип
