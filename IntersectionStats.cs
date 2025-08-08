@@ -40,6 +40,7 @@ namespace RevitMEPHoleManager
         public XYZ LocalCtr { get; set; }   // центр в системе хоста
         public double WidthLocFt { get; set; }
         public double HeightLocFt { get; set; }
+        public XYZ AxisLocal { get; set; }   // единичный вектор оси в Right–Up–Normal
         // ---------------------------------------------------------------
     }
 
@@ -153,16 +154,24 @@ namespace RevitMEPHoleManager
                     // переводим в локальную систему координат хоста
                     Transform hostCS = GetHostLocalCS(host);
                     XYZ localCtr = hostCS.Inverse.OfPoint(center);
+                    
+                    // ось трассы в локальных координатах хоста
+                    XYZ axisDirLocal = hostCS.Inverse.OfVector(axisDir).Normalize();
 
-                    // размеры отверстия
-                    Calculaters.GetHoleSize(
+                    // размеры отверстия с учетом уклона
+                    Calculaters.GetHoleSizeIncline(
                         kind == ShapeKind.Round,
                         elemW,
                         elemH,
                         clearanceMm,
+                        axisDirLocal,
                         out double holeW,
-                        out double holeH,
-                        out string holeType);
+                        out double holeH);
+                    
+                    // имя типа для совместимости
+                    string holeType = kind == ShapeKind.Round 
+                        ? $"Квадр. {Math.Ceiling(holeW)}×{Math.Ceiling(holeH)}"
+                        : $"Прям. {Math.Ceiling(holeW)}×{Math.Ceiling(holeH)}";
 
                     rows.Add(new IntersectRow
                     {
@@ -184,8 +193,9 @@ namespace RevitMEPHoleManager
                         HoleTypeName = holeType,
                         PipeDir = axisDir,
                         LocalCtr = localCtr,
-                        WidthLocFt = wFt,
-                        HeightLocFt = hFt
+                        WidthLocFt = UnitUtils.ConvertToInternalUnits(holeW, UnitTypeId.Millimeters),
+                        HeightLocFt = UnitUtils.ConvertToInternalUnits(holeH, UnitTypeId.Millimeters),
+                        AxisLocal = axisDirLocal
                     });
                 }
             }
