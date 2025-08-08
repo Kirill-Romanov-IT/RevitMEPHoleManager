@@ -12,6 +12,7 @@ namespace RevitMEPHoleManager
     internal static class MergeService
     {
         private const double FtPerMm = 1 / 304.8;   // фут на миллиметр
+        private const double MmPerFt = 304.8;       // миллиметр на фут
 
         /// <param name="rows">Список найденных пересечений</param>
         /// <param name="maxGapMm">Максимальный зазор между центрами, мм</param>
@@ -98,66 +99,74 @@ namespace RevitMEPHoleManager
 
             /*────────────────  X-направление  (ширина)  ────────────────*/
             var xSort = cluster.GroupBy(c => c.MepId).Select(g => g.First())
-                               .OrderBy(r => r.Center.X).ToList();
+                               .OrderBy(r => r.LocalCtr.X).ToList();
 
-            log.Add($" Id   DN,мм   Xцентр");
+            log.Add($" Id   DN,мм   Xлокал");
             foreach (var p in xSort)
-                log.Add($"{p.MepId,6}  {p.WidthFt / ftPerMm,5:F0}   {p.Center.X,8:F1}");
+                log.Add($"{p.MepId,6}  {p.WidthLocFt / ftPerMm,5:F0}   {p.LocalCtr.X,8:F1}");
 
             double sumWidthFt = 0, sumGapXFt = 0;
             for (int i = 0; i < xSort.Count; i++)
             {
-                sumWidthFt += xSort[i].WidthFt;                               // Ø/шир W
+                sumWidthFt += xSort[i].WidthLocFt;                               // Ø/шир W
                 if (i < xSort.Count - 1)
                 {
-                    double gap = (xSort[i + 1].Center.X - xSort[i + 1].WidthFt / 2) -
-                                 (xSort[i].Center.X     + xSort[i].WidthFt / 2);
+                    double gap = (xSort[i + 1].LocalCtr.X - xSort[i + 1].WidthLocFt / 2) -
+                                 (xSort[i].LocalCtr.X     + xSort[i].WidthLocFt / 2);
                     gap = Math.Max(0, gap);
                     sumGapXFt += gap;
 
-                    log.Add($"gap-X {i}-{i + 1} = {gap / ftPerMm:F0} мм");
+                    log.Add($"gap-X {i}-{i + 1} = {gap * MmPerFt:F0} мм");
                 }
             }
 
-            double holeWmm = (sumWidthFt + sumGapXFt) / ftPerMm + 2 * clearanceMm;
-            log.Add($"Σ W = {sumWidthFt / ftPerMm:F0}   Σ gap-X = {sumGapXFt / ftPerMm:F0}");
+            // Итоговая формула габаритов отверстия (MBR)
+            double minX = cluster.Min(r => r.LocalCtr.X - r.WidthLocFt / 2);
+            double maxX = cluster.Max(r => r.LocalCtr.X + r.WidthLocFt / 2);
+            double holeWmm = (maxX - minX) * MmPerFt + 2 * clearanceMm;
+            
+            log.Add($"minX = {minX * MmPerFt:F0}  maxX = {maxX * MmPerFt:F0}");
 
             /*────────────────  Y-направление  (высота) ────────────────*/
             var ySort = cluster.GroupBy(c => c.MepId).Select(g => g.First())
-                               .OrderBy(r => r.Center.Y).ToList();
+                               .OrderBy(r => r.LocalCtr.Y).ToList();
 
             double sumHeightFt = 0, sumGapYFt = 0;
             for (int i = 0; i < ySort.Count; i++)
             {
-                sumHeightFt += ySort[i].HeightFt;                             // Ø/выс H
+                sumHeightFt += ySort[i].HeightLocFt;                             // Ø/выс H
                 if (i < ySort.Count - 1)
                 {
-                    double gap = (ySort[i + 1].Center.Y - ySort[i + 1].HeightFt / 2) -
-                                 (ySort[i].Center.Y     + ySort[i].HeightFt / 2);
+                    double gap = (ySort[i + 1].LocalCtr.Y - ySort[i + 1].HeightLocFt / 2) -
+                                 (ySort[i].LocalCtr.Y     + ySort[i].HeightLocFt / 2);
                     gap = Math.Max(0, gap);
                     sumGapYFt += gap;
 
-                    log.Add($"gap-Y {i}-{i + 1} = {gap / ftPerMm:F0} мм");
+                    log.Add($"gap-Y {i}-{i + 1} = {gap * MmPerFt:F0} мм");
                 }
             }
 
-            double holeHmm = (sumHeightFt + sumGapYFt) / ftPerMm + 2 * clearanceMm;
-            log.Add($"Σ H = {sumHeightFt / ftPerMm:F0}   Σ gap-Y = {sumGapYFt / ftPerMm:F0}");
-            log.Add($"↦ Ширина  = ΣW + Σgap-X + 2×clr = {holeWmm:F0} мм");
-            log.Add($"↦ Высота  = ΣH + Σgap-Y + 2×clr = {holeHmm:F0} мм");
+            // Итоговая формула габаритов отверстия (MBR) для Y
+            double minY = cluster.Min(r => r.LocalCtr.Y - r.HeightLocFt / 2);
+            double maxY = cluster.Max(r => r.LocalCtr.Y + r.HeightLocFt / 2);
+            double holeHmm = (maxY - minY) * MmPerFt + 2 * clearanceMm;
+            
+            log.Add($"minY = {minY * MmPerFt:F0}  maxY = {maxY * MmPerFt:F0}");
+            log.Add($"↦ Ширина = (maxX-minX)+2clr = {holeWmm:F0} мм");
+            log.Add($"↦ Высота = (maxY-minY)+2clr = {holeHmm:F0} мм");
             log.HR();
 
             /*──────────────  центр отверстия  ─────────────*/
-            double minX = xSort.First().Center.X - xSort.First().WidthFt  / 2;
-            double maxX = xSort.Last() .Center.X + xSort.Last() .WidthFt  / 2;
-            double minY = ySort.First().Center.Y - ySort.First().HeightFt / 2;
-            double maxY = ySort.Last() .Center.Y + ySort.Last() .HeightFt / 2;
+            // Центр кластера - среднее арифметическое всех центров
+            double avgX = cluster.Average(r => r.Center.X);
+            double avgY = cluster.Average(r => r.Center.Y);
+            double avgZ = cluster.Average(r => r.Center.Z);
 
             var row = cluster[0];
             row.HoleWidthMm  = holeWmm;
             row.HoleHeightMm = holeHmm;
             row.HoleTypeName = SafeTypeName(holeWmm, holeHmm);
-            row.GroupCtr     = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, row.Center.Z);
+            row.GroupCtr     = new XYZ(avgX, avgY, avgZ);
             row.IsMerged     = true;
             return row;
         }

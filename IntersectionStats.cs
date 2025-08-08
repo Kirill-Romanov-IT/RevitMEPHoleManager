@@ -36,6 +36,10 @@ namespace RevitMEPHoleManager
         public double CenterYft { get; set; }      // Y-координата центра (футы)
         public double CenterZft { get; set; }      // удобнее, чем XYZ Center
         public double? GapMm { get; set; }   // расстояние до соседа (< mergeDist) либо null
+        public XYZ PipeDir { get; set; }   // уни.направление оси (уже в координатах хоста)
+        public XYZ LocalCtr { get; set; }   // центр в системе хоста
+        public double WidthLocFt { get; set; }
+        public double HeightLocFt { get; set; }
         // ---------------------------------------------------------------
     }
 
@@ -44,6 +48,37 @@ namespace RevitMEPHoleManager
     /// </summary>
     internal static class IntersectionStats
     {
+        /// <summary>
+        /// Строит локальную систему координат хоста (Right-Up-Normal)
+        /// </summary>
+        private static Transform GetHostLocalCS(Element host)
+        {
+            // 1️⃣ Вычисляем ортонормированный базис
+            XYZ right, up, normal;
+
+            if (host is Wall wall &&
+                wall.Location is LocationCurve lc &&
+                lc.Curve is Line line)
+            {
+                right  = line.Direction.Normalize(); // по оси стены
+                up     = XYZ.BasisZ;                 // мировое «вверх»
+                normal = right.CrossProduct(up).Normalize();
+            }
+            else                        // плита или «по умолчанию»
+            {
+                right  = XYZ.BasisX;
+                up     = XYZ.BasisY;
+                normal = XYZ.BasisZ;
+            }
+
+            // 2️⃣ Заполняем Transform
+            Transform t = Transform.Identity;
+            t.BasisX = right;
+            t.BasisY = up;
+            t.BasisZ = normal;
+            t.Origin = XYZ.Zero;        // начало совпадает с мировым
+            return t;
+        }
         /// <returns>(wRnd, wRec, fRnd, fRec, rows, hostStats)</returns>
         public static (int wRnd, int wRec, int fRnd, int fRec, List<IntersectRow> rows, List<HostStatRow> hostStats)
             Analyze(IEnumerable<Element> hosts,
@@ -107,6 +142,18 @@ namespace RevitMEPHoleManager
                     double wFt = UnitUtils.ConvertToInternalUnits(elemW, UnitTypeId.Millimeters);
                     double hFt = UnitUtils.ConvertToInternalUnits(elemH, UnitTypeId.Millimeters);
 
+                    // ось трубы (или воздуховода) → мировые координаты
+                    XYZ axisDir = XYZ.BasisX;                // fallback
+                    if (mep is MEPCurve mc && mc.Location is LocationCurve lc &&
+                        lc.Curve is Line ln)
+                    {
+                        axisDir = tx.OfVector(ln.Direction).Normalize();
+                    }
+
+                    // переводим в локальную систему координат хоста
+                    Transform hostCS = GetHostLocalCS(host);
+                    XYZ localCtr = hostCS.Inverse.OfPoint(center);
+
                     // размеры отверстия
                     Calculaters.GetHoleSize(
                         kind == ShapeKind.Round,
@@ -134,7 +181,11 @@ namespace RevitMEPHoleManager
                         ElemHeightMm = elemH,
                         HoleWidthMm = holeW,
                         HoleHeightMm = holeH,
-                        HoleTypeName = holeType
+                        HoleTypeName = holeType,
+                        PipeDir = axisDir,
+                        LocalCtr = localCtr,
+                        WidthLocFt = wFt,
+                        HeightLocFt = hFt
                     });
                 }
             }
