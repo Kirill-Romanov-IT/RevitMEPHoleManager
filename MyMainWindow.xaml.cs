@@ -123,7 +123,7 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            //── 1. хост‑элементы: стены + перекрытия ──
+            //── 1. хост‑элементы: стены + перекрытия  ──
             IList<Element> hostElems = new FilteredElementCollector(doc)
                 .WherePasses(new LogicalOrFilter(
                                 new ElementClassFilter(typeof(Wall)),
