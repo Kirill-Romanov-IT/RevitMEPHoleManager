@@ -93,78 +93,72 @@ namespace RevitMEPHoleManager
         {
             const double ftPerMm = 1 / 304.8;
 
-            // ❶ сортируем слева-на-право и убираем дубли по MepId
-            var pipes = cluster.GroupBy(c => c.MepId)
-                               .Select(g => g.First())
-                               .OrderBy(r => r.Center.X)
-                               .ToList();
-
             log.HR();
             log.Add($"Хост {hostId}   кластер №{clusterNum}");
+
+            /*────────────────  X-направление  (ширина)  ────────────────*/
+            var xSort = cluster.GroupBy(c => c.MepId).Select(g => g.First())
+                               .OrderBy(r => r.Center.X).ToList();
+
             log.Add($" Id   DN,мм   Xцентр");
-            foreach (var p in pipes)
+            foreach (var p in xSort)
                 log.Add($"{p.MepId,6}  {p.WidthFt / ftPerMm,5:F0}   {p.Center.X,8:F1}");
 
-            // ❷ считаем Ø-сумму и промежутки
-            double sumDnFt = 0;
-            double sumGapFt = 0;
-            for (int i = 0; i < pipes.Count; i++)
+            double sumWidthFt = 0, sumGapXFt = 0;
+            for (int i = 0; i < xSort.Count; i++)
             {
-                sumDnFt += pipes[i].WidthFt;                 // Ø_i
+                sumWidthFt += xSort[i].WidthFt;                               // Ø/шир W
+                if (i < xSort.Count - 1)
+                {
+                    double gap = (xSort[i + 1].Center.X - xSort[i + 1].WidthFt / 2) -
+                                 (xSort[i].Center.X     + xSort[i].WidthFt / 2);
+                    gap = Math.Max(0, gap);
+                    sumGapXFt += gap;
+
+                    log.Add($"gap-X {i}-{i + 1} = {gap / ftPerMm:F0} мм");
+                }
             }
 
-            for (int i = 0; i < pipes.Count - 1; i++)
+            double holeWmm = (sumWidthFt + sumGapXFt) / ftPerMm + 2 * clearanceMm;
+            log.Add($"Σ W = {sumWidthFt / ftPerMm:F0}   Σ gap-X = {sumGapXFt / ftPerMm:F0}");
+
+            /*────────────────  Y-направление  (высота) ────────────────*/
+            var ySort = cluster.GroupBy(c => c.MepId).Select(g => g.First())
+                               .OrderBy(r => r.Center.Y).ToList();
+
+            double sumHeightFt = 0, sumGapYFt = 0;
+            for (int i = 0; i < ySort.Count; i++)
             {
-                var a = pipes[i];
-                var b = pipes[i + 1];
+                sumHeightFt += ySort[i].HeightFt;                             // Ø/выс H
+                if (i < ySort.Count - 1)
+                {
+                    double gap = (ySort[i + 1].Center.Y - ySort[i + 1].HeightFt / 2) -
+                                 (ySort[i].Center.Y     + ySort[i].HeightFt / 2);
+                    gap = Math.Max(0, gap);
+                    sumGapYFt += gap;
 
-                double dx = b.Center.X - a.Center.X;
-                double dy = b.Center.Y - a.Center.Y;     // ← учитываем смещение по Y
-                double d2D_Ft = Math.Sqrt(dx * dx + dy * dy);
-
-                double gapFt = d2D_Ft - (a.WidthFt / 2) - (b.WidthFt / 2);
-                gapFt = Math.Max(0, gapFt);              // отрицательные → 0
-
-                sumGapFt += gapFt;
-
-                double gapMm = UnitUtils.ConvertFromInternalUnits(gapFt, UnitTypeId.Millimeters);
-                log.Add($"gap {i}-{i + 1} = {gapMm:F0} мм");
+                    log.Add($"gap-Y {i}-{i + 1} = {gap / ftPerMm:F0} мм");
+                }
             }
 
-            // ❸ переводим в мм
-            double sumDnMm = sumDnFt / ftPerMm;
-            double sumGapMm = sumGapFt / ftPerMm;
+            double holeHmm = (sumHeightFt + sumGapYFt) / ftPerMm + 2 * clearanceMm;
+            log.Add($"Σ H = {sumHeightFt / ftPerMm:F0}   Σ gap-Y = {sumGapYFt / ftPerMm:F0}");
+            log.Add($"↦ Ширина  = ΣW + Σgap-X + 2×clr = {holeWmm:F0} мм");
+            log.Add($"↦ Высота  = ΣH + Σgap-Y + 2×clr = {holeHmm:F0} мм");
+            log.HR();
 
-            // ❹ итоговая ширина (двойной clearance!)
-            double holeWmm = sumDnMm + sumGapMm + 2 * clearanceMm;
+            /*──────────────  центр отверстия  ─────────────*/
+            double minX = xSort.First().Center.X - xSort.First().WidthFt  / 2;
+            double maxX = xSort.Last() .Center.X + xSort.Last() .WidthFt  / 2;
+            double minY = ySort.First().Center.Y - ySort.First().HeightFt / 2;
+            double maxY = ySort.Last() .Center.Y + ySort.Last() .HeightFt / 2;
 
-            log.Add($"DN Σ  = {sumDnMm:F0} мм");
-            log.Add($"Gap Σ = {sumGapMm:F0} мм");
-            log.Add($"Clearance = {clearanceMm} мм");
-            log.Add($"Ширина = {sumDnMm:F0} + {sumGapMm:F0} + 2×{clearanceMm} = {holeWmm:F0} мм");
-
-            /* ➋  Высота – берём максимальную + зазор */
-            double maxHeightFt = cluster.Max(r => r.HeightFt);
-            double holeHmm = maxHeightFt / ftPerMm + clearanceMm;
-
-            /* ➌  Центр отверстия – середина между первой и последней трубой */
-            double left = pipes.First().Center.X - pipes.First().WidthFt / 2;
-            double right = pipes.Last().Center.X + pipes.Last().WidthFt / 2;
-            double ctrX = (left + right) / 2;
-            double ctrY = cluster.Average(r => r.Center.Y);
-            double ctrZ = cluster.Average(r => r.Center.Z);
-            XYZ groupCtr = new XYZ(ctrX, ctrY, ctrZ);
-
-            log.Add($"Центр X = {(ctrX / ftPerMm):F0} мм");
-
-            /* ➍  Заполняем строку */
-            var row = pipes[0];
-            row.IsMerged = true;
-            row.HoleWidthMm = holeWmm;
+            var row = cluster[0];
+            row.HoleWidthMm  = holeWmm;
             row.HoleHeightMm = holeHmm;
-            row.HoleTypeName = SafeTypeName(holeWmm, holeHmm);   // «350x200»
-            row.GroupCtr = groupCtr;                         // ⬅ новый центр
-
+            row.HoleTypeName = SafeTypeName(holeWmm, holeHmm);
+            row.GroupCtr     = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, row.Center.Z);
+            row.IsMerged     = true;
             return row;
         }
 
