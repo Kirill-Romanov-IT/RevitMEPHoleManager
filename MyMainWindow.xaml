@@ -72,19 +72,33 @@
             </DataGrid.Columns>
         </DataGrid>
         
-        <GroupBox Header="Все трубы проекта" Grid.Row="3" Margin="0,12,0,0">
-            <DataGrid x:Name="PipeGrid"
-                      AutoGenerateColumns="False"
-                      IsReadOnly="True"
-                      Height="200">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="80"/>
-                    <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="*"/>
-                    <DataGridTextColumn Header="DN, мм" Binding="{Binding DN}" Width="80"/>
-                    <DataGridTextColumn Header="Длина, мм" Binding="{Binding Length}" Width="90"/>
-                </DataGrid.Columns>
-            </DataGrid>
-        </GroupBox>
+        <TabControl Grid.Row="3" Margin="0,12,0,0" Height="220">
+            <TabItem Header="Трубы проекта">
+                <DataGrid x:Name="PipeGrid"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="80"/>
+                        <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="*"/>
+                        <DataGridTextColumn Header="DN, мм" Binding="{Binding DN}" Width="80"/>
+                        <DataGridTextColumn Header="Длина, мм" Binding="{Binding Length}" Width="90"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+
+            <TabItem Header="Лог расчёта">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <TextBox x:Name="LogBox"
+                             IsReadOnly="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Background="Transparent"
+                             BorderThickness="0"/>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
 
         <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>

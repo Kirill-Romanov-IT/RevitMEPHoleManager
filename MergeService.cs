@@ -16,14 +16,16 @@ namespace RevitMEPHoleManager
         /// <param name="rows">Список найденных пересечений</param>
         /// <param name="maxGapMm">Максимальный зазор между центрами, мм</param>
         /// <param name="clearanceMm">Зазор вокруг элемента, мм</param>
+        /// <param name="log">Логгер для отслеживания процесса</param>
         /// <returns>Новый список: одиночные + кластерные (IsMerged = true)</returns>
-        public static IEnumerable<IntersectRow> Merge(IEnumerable<IntersectRow> rows, double maxGapMm, double clearanceMm)
+        public static IEnumerable<IntersectRow> Merge(IEnumerable<IntersectRow> rows, double maxGapMm, double clearanceMm, HoleLogger log)
         {
             if (rows == null) return Enumerable.Empty<IntersectRow>();
             if (maxGapMm <= 0) return rows;               // объединение отключено
 
             double gapFt = maxGapMm * FtPerMm;
             var result = new List<IntersectRow>();
+            int clusterN = 1;
 
             foreach (var hostGrp in rows.GroupBy(r => r.HostId))
             {
@@ -70,7 +72,7 @@ namespace RevitMEPHoleManager
                     }
 
                     // Создаём объединённую строку с улучшенным расчётом размеров
-                    var merged = BuildMerged(cluster, clearanceMm);
+                    var merged = BuildMerged(cluster, clearanceMm, log, clusterN++, seed.HostId);
                     result.Add(merged);
                 }
             }
@@ -83,42 +85,80 @@ namespace RevitMEPHoleManager
         /// </summary>
         /// <param name="cluster">Список элементов кластера</param>
         /// <param name="clearanceMm">Зазор вокруг элемента, мм</param>
+        /// <param name="log">Логгер для отслеживания процесса</param>
+        /// <param name="clusterNum">Номер кластера</param>
+        /// <param name="hostId">ID хост-элемента</param>
         /// <returns>Объединённая строка IntersectRow</returns>
-        private static IntersectRow BuildMerged(List<IntersectRow> cluster, double clearanceMm)
+        private static IntersectRow BuildMerged(List<IntersectRow> cluster, double clearanceMm, HoleLogger log, int clusterNum, int hostId)
         {
             const double ftPerMm = 1 / 304.8;
 
-            // Ø + зазоры только по уникальным трубо-ID
-            var uniq = cluster.GroupBy(c => c.MepId).Select(g => g.First()).ToList();
-            uniq.Sort((a, b) => a.Center.X.CompareTo(b.Center.X));
+            // ❶ сортируем слева-на-право и убираем дубли по MepId
+            var pipes = cluster.GroupBy(c => c.MepId)
+                               .Select(g => g.First())
+                               .OrderBy(r => r.Center.X)
+                               .ToList();
 
-            double totalWidthFt = 0;
-            for (int i = 0; i < uniq.Count; i++)
+            log.HR();
+            log.Add($"Хост {hostId}   кластер №{clusterNum}");
+            log.Add($" Id   DN,мм   Xцентр");
+            foreach (var p in pipes)
+                log.Add($"{p.MepId,6}  {p.WidthFt / ftPerMm,5:F0}   {p.Center.X,8:F1}");
+
+            // ❷ считаем Ø-сумму и промежутки
+            double sumDnFt = 0;
+            double sumGapFt = 0;
+            for (int i = 0; i < pipes.Count; i++)
             {
-                totalWidthFt += uniq[i].WidthFt;                // Ø_i
-                if (i < uniq.Count - 1)
-                {
-                    double gap = (uniq[i + 1].Center.X - uniq[i + 1].WidthFt / 2) -
-                                 (uniq[i].Center.X + uniq[i].WidthFt / 2);
-                    totalWidthFt += Math.Max(0, gap);           // промежуток
-                }
+                sumDnFt += pipes[i].WidthFt;                 // Ø_i
             }
-            double holeWmm = totalWidthFt / ftPerMm + clearanceMm;   // 1 общий зазор
+
+            for (int i = 0; i < pipes.Count - 1; i++)
+            {
+                var a = pipes[i];
+                var b = pipes[i + 1];
+
+                double dx = b.Center.X - a.Center.X;
+                double dy = b.Center.Y - a.Center.Y;     // ← учитываем смещение по Y
+                double d2D_Ft = Math.Sqrt(dx * dx + dy * dy);
+
+                double gapFt = d2D_Ft - (a.WidthFt / 2) - (b.WidthFt / 2);
+                gapFt = Math.Max(0, gapFt);              // отрицательные → 0
+
+                sumGapFt += gapFt;
+
+                double gapMm = UnitUtils.ConvertFromInternalUnits(gapFt, UnitTypeId.Millimeters);
+                log.Add($"gap {i}-{i + 1} = {gapMm:F0} мм");
+            }
+
+            // ❸ переводим в мм
+            double sumDnMm = sumDnFt / ftPerMm;
+            double sumGapMm = sumGapFt / ftPerMm;
+
+            // ❹ итоговая ширина (двойной clearance!)
+            double holeWmm = sumDnMm + sumGapMm + 2 * clearanceMm;
+
+            log.Add($"DN Σ  = {sumDnMm:F0} мм");
+            log.Add($"Gap Σ = {sumGapMm:F0} мм");
+            log.Add($"Clearance = {clearanceMm} мм");
+            log.Add($"Ширина = {sumDnMm:F0} + {sumGapMm:F0} + 2×{clearanceMm} = {holeWmm:F0} мм");
 
             /* ➋  Высота – берём максимальную + зазор */
             double maxHeightFt = cluster.Max(r => r.HeightFt);
             double holeHmm = maxHeightFt / ftPerMm + clearanceMm;
 
             /* ➌  Центр отверстия – середина между первой и последней трубой */
-            double left = uniq.First().Center.X - uniq.First().WidthFt / 2;
-            double right = uniq.Last().Center.X + uniq.Last().WidthFt / 2;
+            double left = pipes.First().Center.X - pipes.First().WidthFt / 2;
+            double right = pipes.Last().Center.X + pipes.Last().WidthFt / 2;
             double ctrX = (left + right) / 2;
             double ctrY = cluster.Average(r => r.Center.Y);
             double ctrZ = cluster.Average(r => r.Center.Z);
             XYZ groupCtr = new XYZ(ctrX, ctrY, ctrZ);
 
+            log.Add($"Центр X = {(ctrX / ftPerMm):F0} мм");
+
             /* ➍  Заполняем строку */
-            var row = uniq[0];
+            var row = pipes[0];
             row.IsMerged = true;
             row.HoleWidthMm = holeWmm;
             row.HoleHeightMm = holeHmm;

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Data;
 using System.ComponentModel;
@@ -10,6 +11,13 @@ using Autodesk.Revit.DB.Plumbing;   // ← новый using
 
 namespace RevitMEPHoleManager
 {
+    internal sealed class HoleLogger
+    {
+        private readonly StringBuilder sb = new();
+        public void Add(string line) => sb.AppendLine(line);
+        public void HR() => sb.AppendLine(new string('─', 70));
+        public override string ToString() => sb.ToString();
+    }
     internal class PipeRow
     {
         public int Id { get; set; }
@@ -163,6 +171,9 @@ namespace RevitMEPHoleManager
             if (mergeOn && double.TryParse(MergeDistBox.Text, out double mTmp) && mTmp > 0)
                 mergeDist = mTmp;       // мм
 
+            var logger = new HoleLogger();
+            if (mergeOn) logger.Add($"Порог объединения: {mergeDist} мм, clearance: {clearance} мм");
+
             // — вычисляем «чистый» зазор между наружными контурами —
             if (mergeDist > 0)
             {
@@ -208,7 +219,11 @@ namespace RevitMEPHoleManager
             }
 
             if (mergeOn && mergeDist > 0)
-                clashList = MergeService.Merge(clashList, mergeDist, clearance).ToList();
+            {
+                clashList = MergeService.Merge(clashList, mergeDist, clearance, logger).ToList();
+                LogBox.Text = logger.ToString();
+                LogBox.ScrollToEnd();
+            }
             //─────────────────────────────────────────────
 
             /* --- 3.1   DataGrid с детализацией пересечений
