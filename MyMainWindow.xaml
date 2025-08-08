@@ -2,135 +2,97 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Автоматическая расстановка отверстий"
-        Height="550" Width="760">
+        Height="847" Width="760">
 
     <Grid Margin="20">
-        <!-- 0-я строка — заголовок -->
-        <!-- 1-я строка — настройки + основная таблица -->
-        <!-- 2-я строка — сводная таблица по хостам  ✅ -->
-        <!-- 3-я строка — кнопки -->
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="120"/>   <!-- ✦ новая строка -->
+            <RowDefinition Height="120"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- ───────── Заголовок ───────── -->
         <TextBlock Text="Автоматическая расстановка отверстий"
                    FontSize="20"
                    FontWeight="Bold"
                    HorizontalAlignment="Center"
                    Margin="0,0,0,20"/>
 
-        <!-- ───────── Область настроек + таблица ───────── -->
         <Grid Grid.Row="1">
-            <!-- две строки: 0 — настройки, 1 — таблица -->
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- ── настройки ── -->
             <Grid Grid.Row="0" Margin="0,10,0,10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- левая колонка -->
                 <StackPanel Grid.Column="0" Margin="10">
                     <TextBlock Text="Выбор семейства:" Margin="0,0,0,5"/>
-                    <ComboBox x:Name="FamilyCombo"
-                              Height="25"
-                              IsEditable="False"/>
+                    <ComboBox x:Name="FamilyCombo" Height="25" IsEditable="False"/>
                 </StackPanel>
 
-                <!-- правая колонка -->
                 <StackPanel Grid.Column="1" Margin="10">
-
-                    
                     <TextBlock Text="Зазор вокруг элемента (мм):" Margin="0,0,0,5"/>
-                    <TextBox  x:Name="ClearanceBox" Height="25"/>
-
-                    
-                  
+                    <TextBox x:Name="ClearanceBox" Height="25"/>
                     <StackPanel Orientation="Horizontal" Margin="0,20,0,5">
-                        <!-- чек-бокс -->
-                        <CheckBox x:Name="EnableMergeChk"
-                  Content="Объединять отверстия"
-                  VerticalAlignment="Center"/>
-                        <!-- подпись после чек-бокса -->
-                        <TextBlock Text=" — макс. расстояние (мм):"
-                   Margin="6,0,0,0"
-                   VerticalAlignment="Center"/>
+                        <CheckBox x:Name="EnableMergeChk" Content="Объединять отверстия" VerticalAlignment="Center"/>
+                        <TextBlock Text=" — макс. расстояние (мм):" Margin="6,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
-
-                    <!-- само числовое поле -->
-                    <TextBox x:Name="MergeDistBox"
-             Height="25"
-             IsEnabled="{Binding IsChecked, ElementName=EnableMergeChk}"/>
-
+                    <TextBox x:Name="MergeDistBox" Height="25" IsEnabled="{Binding IsChecked, ElementName=EnableMergeChk}"/>
                 </StackPanel>
             </Grid>
 
-            <!-- ───────── Основная таблица пересечений ───────── -->
-            <DataGrid x:Name="StatsGrid"
-                      Grid.Row="1"
-                      AutoGenerateColumns="False"
-                      IsReadOnly="True"
-                      Margin="0,10,0,0">
+            <DataGrid x:Name="StatsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" Margin="0,10,0,0">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="Хост"          Binding="{Binding Host}"   Width="110"/>
-                    <DataGridTextColumn Header="Host Id"       Binding="{Binding HostId}" Width="65"/>
-                    <DataGridTextColumn Header="MEP Id"        Binding="{Binding MepId}"  Width="65"/>
-                    <DataGridTextColumn Header="Форма"         Binding="{Binding Shape}"  Width="75"/>
-                    <DataGridTextColumn Header="Ø / Шир., мм"  Binding="{Binding ElemWidthMm, StringFormat=N0}"  Width="85"/>
-                    <DataGridTextColumn Header="Высота, мм"    Binding="{Binding ElemHeightMm, StringFormat=N0}"  Width="85"/>
-                    <DataGridTextColumn Header="Расст., мм"    Binding="{Binding GapMm, StringFormat=F0}" Width="70"/>
-                    <DataGridTextColumn Header="Отв. Шир., мм" Binding="{Binding HoleWidthMm, StringFormat=N0}"  Width="85"/>
+                    <DataGridTextColumn Header="Хост" Binding="{Binding Host}" Width="110"/>
+                    <DataGridTextColumn Header="Host Id" Binding="{Binding HostId}" Width="65"/>
+                    <DataGridTextColumn Header="MEP Id" Binding="{Binding MepId}" Width="65"/>
+                    <DataGridTextColumn Header="Форма" Binding="{Binding Shape}" Width="75"/>
+                    <DataGridTextColumn Header="Ø / Шир., мм" Binding="{Binding ElemWidthMm, StringFormat=N0}" Width="85"/>
+                    <DataGridTextColumn Header="Высота, мм" Binding="{Binding ElemHeightMm, StringFormat=N0}" Width="85"/>
+                    <DataGridTextColumn Header="Расст., мм" Binding="{Binding GapMm, StringFormat=F0}" Width="70"/>
+                    <DataGridTextColumn Header="Отв. Шир., мм" Binding="{Binding HoleWidthMm, StringFormat=N0}" Width="85"/>
                     <DataGridTextColumn Header="Отв. Выс., мм" Binding="{Binding HoleHeightMm, StringFormat=N0}" Width="85"/>
-                    <DataGridTextColumn Header="Типоразмер"    Binding="{Binding HoleTypeName}" Width="120"/>
+                    <DataGridTextColumn Header="Типоразмер" Binding="{Binding HoleTypeName}" Width="120"/>
                 </DataGrid.Columns>
             </DataGrid>
         </Grid>
 
-        <!-- ───────── Сводка по каждой стене / плите ───────── -->
-        <DataGrid x:Name="HostStatsGrid"
-                  Grid.Row="2"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  Margin="0,10,0,0">
+        <DataGrid x:Name="HostStatsGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" Margin="0,10,0,0">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Host Id"     Binding="{Binding HostId}"   Width="65"/>
-                <DataGridTextColumn Header="Хост"        Binding="{Binding HostName}" Width="110"/>
-                <DataGridTextColumn Header="Круглых"     Binding="{Binding Round}"    Width="80"/>
-                <DataGridTextColumn Header="Квадратных"  Binding="{Binding Rect}"     Width="95"/>
+                <DataGridTextColumn Header="Host Id" Binding="{Binding HostId}" Width="65"/>
+                <DataGridTextColumn Header="Хост" Binding="{Binding HostName}" Width="110"/>
+                <DataGridTextColumn Header="Круглых" Binding="{Binding Round}" Width="80"/>
+                <DataGridTextColumn Header="Квадратных" Binding="{Binding Rect}" Width="95"/>
             </DataGrid.Columns>
         </DataGrid>
+        
+        <GroupBox Header="Все трубы проекта" Grid.Row="3" Margin="0,12,0,0">
+            <DataGrid x:Name="PipeGrid"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      Height="200">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="80"/>
+                    <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="*"/>
+                    <DataGridTextColumn Header="DN, мм" Binding="{Binding DN}" Width="80"/>
+                    <DataGridTextColumn Header="Длина, мм" Binding="{Binding Length}" Width="90"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </GroupBox>
 
-        <!-- ───────── Кнопки ───────── -->
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-
-            <Button Content="Старт"
-                    Width="120" Height="40"
-                    Background="LimeGreen" Foreground="White"
-                    HorizontalAlignment="Center"
-                    Click="StartButton_Click"/>
-
-            <Button Content="?"
-                    Width="30" Height="30"
-                    FontSize="14" FontWeight="Bold"
-                    Background="#163D7A" Foreground="White"
-                    BorderBrush="{x:Null}"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Bottom"
-                    Padding="0"
-                    Grid.Column="1" Margin="0,0,-18,-17">
+            <Button Content="Старт" Width="120" Height="40" Background="LimeGreen" Foreground="White" HorizontalAlignment="Center" Click="StartButton_Click"/>
+            <Button Content="?" Width="30" Height="30" FontSize="14" FontWeight="Bold" Background="#163D7A" Foreground="White" BorderBrush="{x:Null}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Padding="0" Grid.Column="1" Margin="0,0,-18,-17">
                 <Button.Resources>
                     <Style TargetType="Border">
                         <Setter Property="CornerRadius" Value="22"/>

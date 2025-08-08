@@ -27,14 +27,19 @@ namespace RevitMEPHoleManager
 
             foreach (var hostGrp in rows.GroupBy(r => r.HostId))
             {
-                var pending = hostGrp.ToList();
+                // ➊ убираем дубли одной и той же трубы
+                var uniq = hostGrp
+                    .GroupBy(r => r.MepId)
+                    .Select(g => g.First())        // берём первую строку трубы
+                    .ToList();
 
-                while (pending.Any())
+                // дальше uniq вместо hostGrp.ToList();
+                while (uniq.Any())
                 {
                     //–– стартовая точка нового кластера
-                    var seed = pending[0];
+                    var seed = uniq[0];
                     var cluster = new List<IntersectRow> { seed };
-                    pending.RemoveAt(0);
+                    uniq.RemoveAt(0);
 
                     bool expanded;
                     do
@@ -46,13 +51,13 @@ namespace RevitMEPHoleManager
                         double minY = cluster.Min(r => r.Center.Y);
                         double maxY = cluster.Max(r => r.Center.Y);
 
-                        foreach (var r in pending.ToList())
+                        foreach (var r in uniq.ToList())
                         {
                             if (r.Center.X >= minX - gapFt && r.Center.X <= maxX + gapFt &&
                                 r.Center.Y >= minY - gapFt && r.Center.Y <= maxY + gapFt)
                             {
                                 cluster.Add(r);
-                                pending.Remove(r);
+                                uniq.Remove(r);
                                 expanded = true;
                             }
                         }
@@ -83,43 +88,37 @@ namespace RevitMEPHoleManager
         {
             const double ftPerMm = 1 / 304.8;
 
-            /* ➊  Сортируем по горизонтальной оси стены (X) */
-            var byX = cluster.OrderBy(r => r.Center.X).ToList();
+            // Ø + зазоры только по уникальным трубо-ID
+            var uniq = cluster.GroupBy(c => c.MepId).Select(g => g.First()).ToList();
+            uniq.Sort((a, b) => a.Center.X.CompareTo(b.Center.X));
 
-            double sumWidthFt = 0;
-            double sumGapsFt = 0;
-
-            for (int i = 0; i < byX.Count; i++)
+            double totalWidthFt = 0;
+            for (int i = 0; i < uniq.Count; i++)
             {
-                double wFt = byX[i].WidthFt;           // DN или ширина лотка
-                sumWidthFt += wFt;
-
-                if (i < byX.Count - 1)
+                totalWidthFt += uniq[i].WidthFt;                // Ø_i
+                if (i < uniq.Count - 1)
                 {
-                    double rightEdge = byX[i].Center.X + wFt / 2;
-                    double leftEdge = byX[i + 1].Center.X - byX[i + 1].WidthFt / 2;
-                    double gapFt = leftEdge - rightEdge;          // «чистый» зазор
-                    sumGapsFt += Math.Max(gapFt, 0);
+                    double gap = (uniq[i + 1].Center.X - uniq[i + 1].WidthFt / 2) -
+                                 (uniq[i].Center.X + uniq[i].WidthFt / 2);
+                    totalWidthFt += Math.Max(0, gap);           // промежуток
                 }
             }
+            double holeWmm = totalWidthFt / ftPerMm + clearanceMm;   // 1 общий зазор
 
             /* ➋  Высота – берём максимальную + зазор */
             double maxHeightFt = cluster.Max(r => r.HeightFt);
             double holeHmm = maxHeightFt / ftPerMm + clearanceMm;
 
-            /* ➌  Ширина – сумма Ø + зазоры + единый clearance */
-            double holeWmm = (sumWidthFt + sumGapsFt) / ftPerMm + clearanceMm;
-
-            /* ➍  Центр группы (по X) */
-            double minX = byX.First().Center.X - byX.First().WidthFt / 2;
-            double maxX = byX.Last().Center.X + byX.Last().WidthFt / 2;
-            double ctrX = (minX + maxX) / 2;
+            /* ➌  Центр отверстия – середина между первой и последней трубой */
+            double left = uniq.First().Center.X - uniq.First().WidthFt / 2;
+            double right = uniq.Last().Center.X + uniq.Last().WidthFt / 2;
+            double ctrX = (left + right) / 2;
             double ctrY = cluster.Average(r => r.Center.Y);
             double ctrZ = cluster.Average(r => r.Center.Z);
             XYZ groupCtr = new XYZ(ctrX, ctrY, ctrZ);
 
-            /* ➎  Заполняем строку */
-            var row = byX[0];
+            /* ➍  Заполняем строку */
+            var row = uniq[0];
             row.IsMerged = true;
             row.HoleWidthMm = holeWmm;
             row.HoleHeightMm = holeHmm;

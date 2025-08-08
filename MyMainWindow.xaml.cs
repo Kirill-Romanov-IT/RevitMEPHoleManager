@@ -6,9 +6,17 @@ using System.Windows.Data;
 using System.ComponentModel;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.DB.Plumbing;   // ← новый using
 
 namespace RevitMEPHoleManager
 {
+    internal class PipeRow
+    {
+        public int Id { get; set; }
+        public string System { get; set; }
+        public double DN { get; set; }    // мм
+        public double Length { get; set; }    // мм
+    }
     public partial class MainWindow : Window
     {
         private readonly UIApplication _uiApp;
@@ -56,6 +64,38 @@ namespace RevitMEPHoleManager
                 MessageBox.Show("Сначала выберите face‑based семейство Generic Model.");
                 return;
             }
+
+            IList<PipeRow> allPipes = new FilteredElementCollector(doc)
+                .OfClass(typeof(Pipe))
+                .Cast<Pipe>()
+                .Select(p =>
+                {
+                    double dnMm = 0;
+                    Parameter pDN = p.get_Parameter(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+                    if (pDN != null && pDN.HasValue)
+                    {
+                        dnMm = UnitUtils.ConvertFromInternalUnits(pDN.AsDouble(), UnitTypeId.Millimeters);
+                    }
+
+                    double lenMm = 0;
+                    Parameter pLen = p.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
+                    if (pLen != null && pLen.HasValue)
+                    {
+                        lenMm = UnitUtils.ConvertFromInternalUnits(pLen.AsDouble(), UnitTypeId.Millimeters);
+                    }
+                    
+                    return new PipeRow
+                    {
+                        Id = p.Id.IntegerValue,
+                        System = p.Name,
+                        DN = Math.Round(dnMm, 0),
+                        Length = Math.Round(lenMm, 0)
+                    };
+                })
+                .OrderBy(r => r.DN)
+                .ToList();
+
+            PipeGrid.ItemsSource = allPipes;
 
             //── гарантируем тип «Копия1» ──
             const string NEW_TYPE = "Копия1";

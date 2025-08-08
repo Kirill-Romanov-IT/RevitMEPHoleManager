@@ -53,6 +53,7 @@ namespace RevitMEPHoleManager
             int wRnd = 0, wRec = 0, fRnd = 0, fRec = 0;
             var rows = new List<IntersectRow>();
             var hostDict = new Dictionary<int, HostStatRow>();
+            var hostMidPoint = new Dictionary<int, XYZ>();
 
             // пересекаются ли два bounding‑box'а
             bool Intersects(BoundingBoxXYZ a, BoundingBoxXYZ b, out XYZ ctr)
@@ -74,6 +75,13 @@ namespace RevitMEPHoleManager
             {
                 var hBox = host.get_BoundingBox(null);
                 if (hBox == null) continue;
+
+                // сохраняем центр хоста для дедупликации
+                XYZ hostCenter = new XYZ(
+                    (hBox.Min.X + hBox.Max.X) / 2,
+                    (hBox.Min.Y + hBox.Max.Y) / 2,
+                    (hBox.Min.Z + hBox.Max.Z) / 2);
+                hostMidPoint[host.Id.IntegerValue] = hostCenter;
 
                 bool isWall = host is Wall;
                 bool isFloor = host is Floor;
@@ -130,6 +138,17 @@ namespace RevitMEPHoleManager
                     });
                 }
             }
+
+            // убираем повторы «та же труба – та же стена»
+            rows = rows
+                .GroupBy(r => new { r.HostId, r.MepId })  // ключ = грань-хост + труба
+                .Select(g =>
+                {
+                    // берём пересечение, чья точка ближе к центру стены
+                    return g.OrderBy(r => r.Center.DistanceTo(hostMidPoint[r.HostId]))
+                            .First();
+                })
+                .ToList();
 
             return (wRnd, wRec, fRnd, fRec, rows, hostDict.Values.ToList());
         }
