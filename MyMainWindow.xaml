@@ -1,8 +1,12 @@
 ﻿<Window x:Class="RevitMEPHoleManager.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:RevitMEPHoleManager"
         Title="Автоматическая расстановка отверстий"
         Height="847" Width="760">
+    <Window.Resources>
+        <local:BoolToYesNoConverter x:Key="BoolToYesNoConverter"/>
+    </Window.Resources>
 
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -53,6 +57,7 @@
                     <DataGridTextColumn Header="Host Id" Binding="{Binding HostId}" Width="65"/>
                     <DataGridTextColumn Header="MEP Id" Binding="{Binding MepId}" Width="65"/>
                     <DataGridTextColumn Header="Форма" Binding="{Binding Shape}" Width="75"/>
+                    <DataGridTextColumn Header="Наклон" Binding="{Binding IsDiagonal, Converter={StaticResource BoolToYesNoConverter}}" Width="60"/>
                     <DataGridTextColumn Header="Ø / Шир., мм" Binding="{Binding ElemWidthMm, StringFormat=N0}" Width="85"/>
                     <DataGridTextColumn Header="Высота, мм" Binding="{Binding ElemHeightMm, StringFormat=N0}" Width="85"/>
                     <DataGridTextColumn Header="Расст., мм" Binding="{Binding GapMm, StringFormat=F0}" Width="70"/>

@@ -5,6 +5,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Data;
 using System.ComponentModel;
+using System.Globalization;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.DB.Plumbing;   // ← новый using
@@ -791,6 +792,24 @@ namespace RevitMEPHoleManager
                 if (p != null) return p;
             }
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Конвертер bool в "Да"/"Нет" для отображения в DataGrid
+    /// </summary>
+    public class BoolToYesNoConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value is bool boolValue)
+                return boolValue ? "Да" : "Нет";
+            return "Нет";
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            return value?.ToString() == "Да";
         }
     }
 }

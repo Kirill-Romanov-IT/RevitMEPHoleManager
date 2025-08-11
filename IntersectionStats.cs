@@ -41,6 +41,7 @@ namespace RevitMEPHoleManager
         public double WidthLocFt { get; set; }
         public double HeightLocFt { get; set; }
         public XYZ AxisLocal { get; set; }   // единичный вектор оси в Right–Up–Normal
+        public bool IsDiagonal { get; set; }   // true, если труба идет наискось (двойной зазор)
         // ---------------------------------------------------------------
     }
 
@@ -158,12 +159,23 @@ namespace RevitMEPHoleManager
                     // ось трассы в локальных координатах хоста
                     XYZ axisDirLocal = hostCS.Inverse.OfVector(axisDir).Normalize();
 
-                    // размеры отверстия с учетом уклона
+                    // ────────────────────────────────────────────────────────
+                    // ОПРЕДЕЛЕНИЕ НАКЛОННЫХ ТРУБ: для них применяем двойной зазор
+                    // ────────────────────────────────────────────────────────
+                    
+                    // Проверяем, идет ли труба наискось (не перпендикулярно к стене)
+                    double angleToNormal = Math.Abs(axisDirLocal.Z); // cos угла между трубой и нормалью
+                    const double straightThreshold = 0.9; // ~25° отклонение от перпендикуляра
+                    
+                    bool isDiagonal = angleToNormal < straightThreshold;
+                    double effectiveClearance = isDiagonal ? clearanceMm * 2.0 : clearanceMm;
+                    
+                    // размеры отверстия с учетом уклона и увеличенного зазора для наклонных труб
                     Calculaters.GetHoleSizeIncline(
                         kind == ShapeKind.Round,
                         elemW,
                         elemH,
-                        clearanceMm,
+                        effectiveClearance,
                         axisDirLocal,
                         out double holeW,
                         out double holeH);
@@ -195,7 +207,8 @@ namespace RevitMEPHoleManager
                         LocalCtr = localCtr,
                         WidthLocFt = UnitUtils.ConvertToInternalUnits(holeW, UnitTypeId.Millimeters),
                         HeightLocFt = UnitUtils.ConvertToInternalUnits(holeH, UnitTypeId.Millimeters),
-                        AxisLocal = axisDirLocal
+                        AxisLocal = axisDirLocal,
+                        IsDiagonal = isDiagonal
                     });
                 }
             }
