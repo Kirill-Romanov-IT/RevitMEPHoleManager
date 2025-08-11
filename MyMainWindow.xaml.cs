@@ -106,6 +106,28 @@ namespace RevitMEPHoleManager
             return false;
         }
 
+        /// <summary>
+        /// Строим проверочный бокс вокруг точки (в футах)
+        /// </summary>
+        private static BoundingBoxXYZ BuildCheckBox(XYZ center, double halfX, double halfY, double halfZ)
+        {
+            return new BoundingBoxXYZ
+            {
+                Min = new XYZ(center.X - halfX, center.Y - halfY, center.Z - halfZ),
+                Max = new XYZ(center.X + halfX, center.Y + halfY, center.Z + halfZ)
+            };
+        }
+
+        /// <summary>
+        /// AABB-пересечение (как в IntersectionStats.Intersects, но локально)
+        /// </summary>
+        private static bool IntersectsAabb(BoundingBoxXYZ a, BoundingBoxXYZ b)
+        {
+            return (a.Min.X <= b.Max.X && a.Max.X >= b.Min.X) &&
+                   (a.Min.Y <= b.Max.Y && a.Max.Y >= b.Min.Y) &&
+                   (a.Min.Z <= b.Max.Z && a.Max.Z >= b.Min.Z);
+        }
+
         public MainWindow(UIApplication uiApp)
         {
             InitializeComponent();
@@ -230,6 +252,29 @@ namespace RevitMEPHoleManager
                 Transform lTx = link.GetTransform();   // связь → координаты хоста
                 foreach (Element mep in CollectMEP(lDoc))
                     mepList.Add((mep, lTx));
+            }
+
+            //── 2a. КОНСТРУКТИВ: колонны + балки (активная модель + связи) ──
+            ElementFilter fCol = new ElementCategoryFilter(BuiltInCategory.OST_StructuralColumns);
+            ElementFilter fBeam = new ElementCategoryFilter(BuiltInCategory.OST_StructuralFraming);
+            ElementFilter structFilter = new LogicalOrFilter(fCol, fBeam);
+
+            IEnumerable<Element> CollectStruct(Document d) =>
+                new FilteredElementCollector(d).WherePasses(structFilter).WhereElementIsNotElementType().ToElements();
+
+            var structList = new List<(Element elem, Transform tx)>();
+
+            foreach (Element structElem in CollectStruct(doc))                          // активная модель
+                structList.Add((structElem, Transform.Identity));
+
+            foreach (RevitLinkInstance link in
+                     new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>())
+            {
+                Document lDoc = link.GetLinkDocument();
+                if (lDoc == null) continue;
+                Transform lTx = link.GetTransform();                           // связь → координаты хоста
+                foreach (Element structElem in CollectStruct(lDoc))
+                    structList.Add((structElem, lTx));
             }
 
             //── 3. анализ пересечений ──
@@ -416,6 +461,45 @@ namespace RevitMEPHoleManager
                                ? normal.CrossProduct(XYZ.BasisZ) 
                                : normal.CrossProduct(XYZ.BasisX);
                     refDir = refDir.Normalize();
+
+                    // ── ФИЛЬТР: если рядом колонна/балка — не вставляем отверстие ──
+                    double wFt = UnitUtils.ConvertToInternalUnits(row.HoleWidthMm > 0 ? row.HoleWidthMm : row.ElemWidthMm,
+                                                                  UnitTypeId.Millimeters);
+                    double hFt = UnitUtils.ConvertToInternalUnits(row.HoleHeightMm > 0 ? row.HoleHeightMm : row.ElemHeightMm,
+                                                                  UnitTypeId.Millimeters);
+
+                    // толщина проверочного бокса по нормали (±150 мм)
+                    double halfZ = UnitUtils.ConvertToInternalUnits(150, UnitTypeId.Millimeters);
+
+                    // проверочный бокс строим в координатах хоста (placePt уже проектирован на грань)
+                    var checkBox = BuildCheckBox(placePt, wFt / 2, hFt / 2, halfZ);
+
+                    // пробегаем по колоннам/балкам (их bbox трансформируем в координаты хоста)
+                    bool hitStruct = false;
+                    foreach (var (se, tx) in structList)
+                    {
+                        var bb = se.get_BoundingBox(null);
+                        if (bb == null) continue;
+
+                        var bbHost = new BoundingBoxXYZ
+                        {
+                            Min = tx.OfPoint(bb.Min),
+                            Max = tx.OfPoint(bb.Max)
+                        };
+
+                        if (IntersectsAabb(checkBox, bbHost))
+                        {
+                            hitStruct = true;
+                            break;
+                        }
+                    }
+
+                    if (hitStruct)
+                    {
+                        // опционально: записать в лог
+                        // logger.Add($"Пропуск: рядом колонна/балка — Host {row.HostId}, MEP {row.MepId}");
+                        continue; // пропускаем вставку
+                    }
 
                     // ➊ вставляем face-based экземпляр базовым символом (Копия1)
                     FamilyInstance inst = doc.Create.NewFamilyInstance(faceRef,
