@@ -66,6 +66,46 @@ namespace RevitMEPHoleManager
             return best;
         }
 
+        /// <summary>
+        /// Проверяет, попадает ли точка в проём окна/двери стены
+        /// </summary>
+        private static bool IsInDoorOrWindowOpening(Document doc, Element host, XYZ point)
+        {
+            // Для простоты: учитываем только стены
+            if (host is not Wall wall) return false;
+
+            const double tolFt = 5.0 / 304.8; // 5 мм допуск
+
+            // Все дверные/оконные экземпляры, у которых Host == данная стена
+            var doors = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_Doors)
+                .WhereElementIsNotElementType()
+                .Cast<FamilyInstance>()
+                .Where(fi => fi.Host?.Id == wall.Id);
+
+            var wins = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_Windows)
+                .WhereElementIsNotElementType()
+                .Cast<FamilyInstance>()
+                .Where(fi => fi.Host?.Id == wall.Id);
+
+            foreach (var fi in doors.Concat(wins))
+            {
+                var bb = fi.get_BoundingBox(null);
+                if (bb == null) continue;
+
+                // Простой AABB‑тест с небольшим допуском
+                if (point.X >= bb.Min.X - tolFt && point.X <= bb.Max.X + tolFt &&
+                    point.Y >= bb.Min.Y - tolFt && point.Y <= bb.Max.Y + tolFt &&
+                    point.Z >= bb.Min.Z - tolFt && point.Z <= bb.Max.Z + tolFt)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public MainWindow(UIApplication uiApp)
         {
             InitializeComponent();
@@ -360,6 +400,13 @@ namespace RevitMEPHoleManager
                     if (projection == null) continue;
                     
                     XYZ placePt = projection.XYZPoint;
+                    
+                    // ⬇️ НОВОЕ: не вставлять в проёмы окон/дверей
+                    if (IsInDoorOrWindowOpening(doc, host, placePt))
+                    {
+                        continue; // пропускаем это отверстие
+                    }
+                    
                     XYZ normal = face.FaceNormal.Normalize();
                     
                     // направление размещения: проекция оси трубы на плоскость грани
