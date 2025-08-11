@@ -128,6 +128,111 @@ namespace RevitMEPHoleManager
                    (a.Min.Z <= b.Max.Z && a.Max.Z >= b.Min.Z);
         }
 
+        /// <summary>
+        /// Рассчитывает среднюю точку между входом и выходом трубы через стену
+        /// </summary>
+        private XYZ CalculateMidPointOnWall(IntersectRow row, Element host, PlanarFace face)
+        {
+            try
+            {
+                // Получаем геометрию трубы
+                var mep = _uiApp.ActiveUIDocument.Document.GetElement(new ElementId(row.MepId));
+                if (!(mep is MEPCurve mepCurve) || !(mepCurve.Location is LocationCurve locationCurve))
+                {
+                    // Fallback: простая проекция центра
+                    var projCenter = face.Project(row.Center);
+                    return projCenter?.XYZPoint ?? row.Center;
+                }
+
+                var line = locationCurve.Curve as Line;
+                if (line == null)
+                {
+                    // Fallback для кривых труб
+                    var projCenter = face.Project(row.Center);
+                    return projCenter?.XYZPoint ?? row.Center;
+                }
+
+                // Получаем начальную и конечную точки трубы
+                XYZ startPt = line.GetEndPoint(0);
+                XYZ endPt = line.GetEndPoint(1);
+
+                // Получаем солид стены для точного пересечения
+                var hostSolid = GetHostSolid(host);
+                if (hostSolid == null)
+                {
+                    // Fallback: средняя точка между проекциями концов
+                    var projStart = face.Project(startPt);
+                    var projEnd = face.Project(endPt);
+                    if (projStart != null && projEnd != null)
+                    {
+                        return (projStart.XYZPoint + projEnd.XYZPoint) / 2.0;
+                    }
+                    var projCenter = face.Project(row.Center);
+                    return projCenter?.XYZPoint ?? row.Center;
+                }
+
+                // Находим точки пересечения оси трубы с солидом стены
+                var intersectionOptions = new SolidCurveIntersectionOptions();
+                var intersectionResult = hostSolid.IntersectWithCurve(line, intersectionOptions);
+
+                if (intersectionResult != null && intersectionResult.SegmentCount >= 1)
+                {
+                    // Берем первый сегмент пересечения (трубу через стену)
+                    var curve = intersectionResult.GetCurveSegment(0);
+                    XYZ entryPt = curve.GetEndPoint(0);   // точка входа
+                    XYZ exitPt = curve.GetEndPoint(1);    // точка выхода
+
+                    // Средняя точка между входом и выходом
+                    XYZ midPoint = (entryPt + exitPt) / 2.0;
+
+                    // Проектируем на грань для точного позиционирования
+                    var projMid = face.Project(midPoint);
+                    return projMid?.XYZPoint ?? midPoint;
+                }
+                else
+                {
+                    // Fallback: если пересечение не найдено
+                    var projCenter = face.Project(row.Center);
+                    return projCenter?.XYZPoint ?? row.Center;
+                }
+            }
+            catch (Exception)
+            {
+                // При любой ошибке возвращаем безопасную позицию
+                var projCenter = face.Project(row.Center);
+                return projCenter?.XYZPoint ?? row.Center;
+            }
+        }
+
+        /// <summary>
+        /// Получает солид хост-элемента для точных геометрических расчетов
+        /// </summary>
+        private static Solid GetHostSolid(Element host)
+        {
+            var options = new Options { ComputeReferences = true };
+            var geomElem = host.get_Geometry(options);
+            
+            foreach (GeometryObject geomObj in geomElem)
+            {
+                if (geomObj is Solid solid && solid.Volume > 1e-6)
+                {
+                    return solid;
+                }
+                else if (geomObj is GeometryInstance instance)
+                {
+                    var instGeom = instance.GetInstanceGeometry();
+                    foreach (GeometryObject instObj in instGeom)
+                    {
+                        if (instObj is Solid instSolid && instSolid.Volume > 1e-6)
+                        {
+                            return instSolid;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
         public MainWindow(UIApplication uiApp)
         {
             InitializeComponent();
@@ -282,6 +387,10 @@ namespace RevitMEPHoleManager
             if (double.TryParse(ClearanceBox.Text, out double cTmp) && cTmp > 0)
                 clearance = cTmp;
 
+            // Настройка смещения позиции отверстий (мм)
+            double positionOffsetMm = 5.0; // значение по умолчанию
+            // TODO: Можно добавить TextBox в UI для настройки этого параметра
+
             var (wRnd, wRec, fRnd, fRec, clashList, hostStats) =
                 IntersectionStats.Analyze(hostElems, mepList, clearance);
 
@@ -331,9 +440,9 @@ namespace RevitMEPHoleManager
                         {
                             rows[i].GapMm = Math.Round(
                                 UnitUtils.ConvertFromInternalUnits(minGapFt, UnitTypeId.Millimeters));
-                        }
-                        else
-                        {
+                }
+                else
+                {
                             rows[i].GapMm = null;              // ячейка остаётся пустой
                         }
                     }
@@ -441,10 +550,26 @@ namespace RevitMEPHoleManager
 
                     // получаем геометрию грани для расчета точки размещения
                     var face = (PlanarFace)host.GetGeometryObjectFromReference(faceRef);
-                    var projection = face.Project(clashPt);
-                    if (projection == null) continue;
                     
-                    XYZ placePt = projection.XYZPoint;
+                    // ────────────────────────────────────────────────────────
+                    // УЛУЧШЕННОЕ ПОЗИЦИОНИРОВАНИЕ: учитываем геометрию пересечения
+                    // ────────────────────────────────────────────────────────
+                    
+                    XYZ placePt;
+                    
+                    // Если это кластерное отверстие, используем GroupCtr
+                    if (row.GroupCtr != null)
+                    {
+                        var projGroup = face.Project(row.GroupCtr);
+                        placePt = projGroup?.XYZPoint ?? face.Project(clashPt)?.XYZPoint;
+                    }
+                    else
+                    {
+                        // Для одиночного отверстия: находим среднюю точку между входом и выходом трубы через стену
+                        placePt = CalculateMidPointOnWall(row, host, face);
+                    }
+                    
+                    if (placePt == null) continue;
                     
                     // ⬇️ НОВОЕ: не вставлять в проёмы окон/дверей
                     if (IsInDoorOrWindowOpening(doc, host, placePt))
@@ -472,13 +597,69 @@ namespace RevitMEPHoleManager
                     }
                     // ⬆️⬆️⬆️ КОНЕЦ НОВОГО КОДА ⬆️⬆️⬆️
                     
-                    // направление размещения: проекция оси трубы на плоскость грани
-                    XYZ refDir = row.PipeDir - normal * row.PipeDir.DotProduct(normal);
-                    if (refDir.GetLength() < 1e-6)  // труба перпендикулярна грани
-                        refDir = normal.CrossProduct(XYZ.BasisZ).GetLength() > 1e-6 
-                               ? normal.CrossProduct(XYZ.BasisZ) 
-                               : normal.CrossProduct(XYZ.BasisX);
-                    refDir = refDir.Normalize();
+                    // ────────────────────────────────────────────────────────
+                    // УЛУЧШЕННАЯ ОРИЕНТАЦИЯ: более точное направление размещения
+                    // ────────────────────────────────────────────────────────
+                    
+                    XYZ refDir;
+                    var pipeDirNormalized = row.PipeDir.Normalize();
+                    
+                    // Проекция оси трубы на плоскость грани
+                    XYZ projectedPipeDir = pipeDirNormalized - normal * pipeDirNormalized.DotProduct(normal);
+                    
+                    if (projectedPipeDir.GetLength() > 1e-6)
+                    {
+                        // Используем проекцию оси трубы для ориентации отверстия
+                        refDir = projectedPipeDir.Normalize();
+                    }
+                    else
+                    {
+                        // Труба перпендикулярна грани - используем более стабильную ориентацию
+                        // Ориентируем по преобладающему направлению в плане
+                        if (Math.Abs(normal.X) > Math.Abs(normal.Y))
+                        {
+                            // Стена примерно параллельна оси Y - ориентируем вдоль Y
+                            refDir = normal.CrossProduct(XYZ.BasisY).Normalize();
+                        }
+                        else
+                        {
+                            // Стена примерно параллельна оси X - ориентируем вдоль X
+                            refDir = normal.CrossProduct(XYZ.BasisX).Normalize();
+                        }
+                        
+                        // Если всё ещё проблемы с ориентацией, используем Z
+                        if (refDir.GetLength() < 1e-6)
+                        {
+                            refDir = normal.CrossProduct(XYZ.BasisZ).Normalize();
+                        }
+                    }
+                    
+                    // Дополнительная корректировка позиции для лучшего выравнивания
+                    // Сдвигаем точку размещения в сторону оси трубы для более точного позиционирования
+                    if (row.GroupCtr == null) // только для одиночных отверстий
+                    {
+                        // Небольшой сдвиг вдоль проекции оси трубы для точности позиционирования
+                        double offsetMm = positionOffsetMm; // настраиваемое смещение
+                        double offsetFt = UnitUtils.ConvertToInternalUnits(offsetMm, UnitTypeId.Millimeters);
+                        
+                        if (projectedPipeDir.GetLength() > 1e-6)
+                        {
+                            var offsetVec = projectedPipeDir.Normalize() * offsetFt;
+                            placePt = placePt + offsetVec;
+                            
+                            // Проверяем, что точка всё ещё на грани
+                            var checkProj = face.Project(placePt);
+                            if (checkProj != null && checkProj.Distance < 0.05) // 15мм допуск
+                            {
+                                placePt = checkProj.XYZPoint;
+                            }
+                            // Если точка ушла с грани, возвращаем исходную позицию
+                            else
+                            {
+                                placePt = placePt - offsetVec;
+                            }
+                        }
+                    }
 
                     // ── ФИЛЬТР: если рядом колонна/балка — не вставляем отверстие ──
                     double wFt = UnitUtils.ConvertToInternalUnits(row.HoleWidthMm > 0 ? row.HoleWidthMm : row.ElemWidthMm,
