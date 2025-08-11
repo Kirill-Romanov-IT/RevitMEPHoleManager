@@ -314,9 +314,9 @@ namespace RevitMEPHoleManager
             HostStatsGrid.ItemsSource = hostStats;
 
             // 3.3. всплывающее окно‑сводка
-            TaskDialog.Show("Статистика пересечений",
-                $"В стенах:\n  • круглые   — {wRnd}\n  • квадратные — {wRec}\n\n" +
-                $"В перекрытиях:\n  • круглые   — {fRnd}\n  • квадратные — {fRec}");
+            //TaskDialog.Show("Статистика пересечений",
+              //  $"В стенах:\n  • круглые   — {wRnd}\n  • квадратные — {wRec}\n\n" +
+                //$"В перекрытиях:\n  • круглые   — {fRnd}\n  • квадратные — {fRec}");
 
             //── 4. вставка отверстий ──
             int placed = 0;
