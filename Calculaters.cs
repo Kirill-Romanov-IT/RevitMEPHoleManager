@@ -67,23 +67,67 @@ namespace RevitMEPHoleManager
             out double holeWmm,
             out double holeHmm)
         {
-            // cos θ между осью трассы и нормалью стены (BasisZ)
-            double cosTheta = Math.Abs(axisLocal.Z);
-            cosTheta = Math.Max(1e-3, cosTheta); // защита деления на 0
+            // Вектор оси трубы в локальных координатах хоста (Right-Up-Normal)
+            // axisLocal.X = проекция на ось Right (вдоль стены)
+            // axisLocal.Y = проекция на ось Up (вертикаль)
+            // axisLocal.Z = проекция на ось Normal (через стену)
+
+            // Защита от деления на ноль
+            double axX = Math.Abs(axisLocal.X);
+            double axY = Math.Abs(axisLocal.Y);
+            double axZ = Math.Max(1e-3, Math.Abs(axisLocal.Z));
 
             if (isRound)
             {
-                // эллипс: мал. ось = D, бол. = D / cosθ
-                holeWmm = elemWmm + 2 * clearanceMm;          // по Right
-                holeHmm = elemWmm / cosTheta + 2 * clearanceMm; // по Up
+                // Для круглой трубы: проекция круга на плоскость стены даёт эллипс
+                // Размеры эллипса зависят от углов наклона в обеих плоскостях
+                
+                // По оси Right (X): учитываем наклон в плоскости XZ
+                double cosAlphaX = axZ / Math.Sqrt(axX * axX + axZ * axZ);
+                cosAlphaX = Math.Max(1e-3, cosAlphaX);
+                
+                // По оси Up (Y): учитываем наклон в плоскости YZ  
+                double cosAlphaY = axZ / Math.Sqrt(axY * axY + axZ * axZ);
+                cosAlphaY = Math.Max(1e-3, cosAlphaY);
+                
+                holeWmm = elemWmm / cosAlphaX + 2 * clearanceMm;  // ширина эллипса
+                holeHmm = elemWmm / cosAlphaY + 2 * clearanceMm;  // высота эллипса
             }
-            else   // прямоугольная
+            else   // прямоугольная/квадратная секция
             {
-                // проекция прямоуг. (консервативно): умножаем большую сторону на 1/cosθ
-                double w = Math.Max(elemWmm, elemHmm);
-                double h = Math.Min(elemWmm, elemHmm);
-                holeWmm = w + 2 * clearanceMm;
-                holeHmm = h / cosTheta + 2 * clearanceMm;
+                // Для прямоугольного сечения нужно учесть поворот прямоугольника в плоскости стены
+                // Консервативный подход: рассчитываем габариты повёрнутого прямоугольника
+                
+                // Проекция осей прямоугольного сечения на плоскость стены
+                // Ось сечения (вдоль трубы) проектируется как axisLocal
+                // Поперечные оси сечения нужно спроектировать на плоскость XY
+                
+                // Нормализованная проекция оси трубы на плоскость стены (XY)
+                double projLength = Math.Sqrt(axX * axX + axY * axY);
+                projLength = Math.Max(1e-6, projLength);
+                
+                double unitX = axX / projLength;  // единичный вектор проекции по X
+                double unitY = axY / projLength;  // единичный вектор проекции по Y
+                
+                // Поперечный вектор к проекции (повёрнутый на 90°)
+                double perpX = -unitY;
+                double perpY = unitX;
+                
+                // Габариты повёрнутого прямоугольника в плоскости стены
+                // Для каждой оси (X,Y) находим максимальную проекцию углов прямоугольника
+                double hw = elemWmm / 2;  // полуширина сечения
+                double hh = elemHmm / 2;  // полувысота сечения
+                
+                // Углы прямоугольного сечения при проекции на плоскость стены:
+                double projW = Math.Abs(hw * unitX) + Math.Abs(hh * perpX);
+                double projH = Math.Abs(hw * unitY) + Math.Abs(hh * perpY);
+                
+                // Учитываем также увеличение из-за наклона к плоскости стены
+                double cosTheta = axZ;  // cos угла между осью трубы и нормалью стены
+                cosTheta = Math.Max(1e-3, cosTheta);
+                
+                holeWmm = 2 * projW / cosTheta + 2 * clearanceMm;
+                holeHmm = 2 * projH / cosTheta + 2 * clearanceMm;
             }
         }
     }
