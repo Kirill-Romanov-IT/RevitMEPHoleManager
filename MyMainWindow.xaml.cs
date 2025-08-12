@@ -52,19 +52,79 @@ namespace RevitMEPHoleManager
             else
                 throw new InvalidOperationException($"Неподдерживаемый тип хоста: {host.GetType().Name}");
 
+            // проверяем, что у нас есть грани для работы
+            if (!refs.Any())
+            {
+                throw new InvalidOperationException($"Не удалось получить грани для элемента {host.Id}");
+            }
+
             // выбираем грань, чья нормаль максимально сонаправлена с осью трубы
             var best = refs
+                .Where(r => r != null) // исключаем null references
                 .Select(r =>
                 {
-                    var face = (PlanarFace)host.GetGeometryObjectFromReference(r);
-                    double dot = Math.Abs(face.FaceNormal.Normalize()
-                                           .DotProduct(pipeDir.Normalize()));
+                    Face face;
+                    try
+                    {
+                        face = host.GetGeometryObjectFromReference(r) as Face;
+                        if (face == null) return (r, 0.0);
+                    }
+                    catch
+                    {
+                        return (r, 0.0);
+                    }
+                    
+                    XYZ faceNormal;
+                    if (face is PlanarFace planarFace)
+                    {
+                        // Плоская грань - используем обычную нормаль
+                        faceNormal = planarFace.FaceNormal.Normalize();
+                    }
+                    else if (face is CylindricalFace cylindricalFace)
+                    {
+                        // Цилиндрическая грань (дуговые стены) - нормаль в точке пересечения
+                        var proj = cylindricalFace.Project(pt);
+                        if (proj != null)
+                        {
+                            var uv = proj.UVPoint;
+                            faceNormal = cylindricalFace.ComputeNormal(uv).Normalize();
+                        }
+                        else
+                        {
+                            // Fallback: нормаль в центре грани
+                            var bbox = cylindricalFace.GetBoundingBox();
+                            var centerUV = new UV((bbox.Min.U + bbox.Max.U) / 2, (bbox.Min.V + bbox.Max.V) / 2);
+                            faceNormal = cylindricalFace.ComputeNormal(centerUV).Normalize();
+                        }
+                    }
+                    else
+                    {
+                        // Другие типы граней - fallback
+                        try
+                        {
+                            var bbox = face.GetBoundingBox();
+                            var centerUV = new UV((bbox.Min.U + bbox.Max.U) / 2, (bbox.Min.V + bbox.Max.V) / 2);
+                            faceNormal = face.ComputeNormal(centerUV).Normalize();
+                        }
+                        catch
+                        {
+                            return (r, 0.0);
+                        }
+                    }
+                    
+                    double dot = Math.Abs(faceNormal.DotProduct(pipeDir.Normalize()));
                     return (r, dot);
                 })
-                .OrderByDescending(t => t.dot)
-                .First().r;
+                .Where(t => t.Item2 > 0.0) // исключаем грани с ошибками
+                .OrderByDescending(t => t.Item2)
+                .FirstOrDefault();
 
-            return best;
+            if (best.r == null)
+            {
+                throw new InvalidOperationException($"Не удалось найти подходящую грань для элемента {host.Id}");
+            }
+
+            return best.r;
         }
 
         /// <summary>
@@ -132,7 +192,7 @@ namespace RevitMEPHoleManager
         /// <summary>
         /// Рассчитывает среднюю точку между входом и выходом трубы через стену
         /// </summary>
-        private XYZ CalculateMidPointOnWall(IntersectRow row, Element host, PlanarFace face)
+        private XYZ CalculateMidPointOnWall(IntersectRow row, Element host, Face face)
         {
             try
             {
@@ -202,6 +262,57 @@ namespace RevitMEPHoleManager
                 // При любой ошибке возвращаем безопасную позицию
                 var projCenter = face.Project(row.Center);
                 return projCenter?.XYZPoint ?? row.Center;
+            }
+        }
+
+        /// <summary>
+        /// Получает нормаль к грани в указанной точке (универсально для всех типов граней)
+        /// </summary>
+        private static XYZ GetFaceNormal(Face face, XYZ point)
+        {
+            if (face is PlanarFace planarFace)
+            {
+                return planarFace.FaceNormal.Normalize();
+            }
+            else if (face is CylindricalFace cylindricalFace)
+            {
+                var proj = cylindricalFace.Project(point);
+                if (proj != null)
+                {
+                    var uv = proj.UVPoint;
+                    return cylindricalFace.ComputeNormal(uv).Normalize();
+                }
+                else
+                {
+                    // Fallback: нормаль в центре грани
+                    var bbox = cylindricalFace.GetBoundingBox();
+                    var centerUV = new UV((bbox.Min.U + bbox.Max.U) / 2, (bbox.Min.V + bbox.Max.V) / 2);
+                    return cylindricalFace.ComputeNormal(centerUV).Normalize();
+                }
+            }
+            else
+            {
+                // Для других типов граней
+                try
+                {
+                    var proj = face.Project(point);
+                    if (proj != null)
+                    {
+                        var uv = proj.UVPoint;
+                        return face.ComputeNormal(uv).Normalize();
+                    }
+                    else
+                    {
+                        var bbox = face.GetBoundingBox();
+                        var centerUV = new UV((bbox.Min.U + bbox.Max.U) / 2, (bbox.Min.V + bbox.Max.V) / 2);
+                        return face.ComputeNormal(centerUV).Normalize();
+                    }
+                }
+                catch
+                {
+                    // Последний fallback
+                    return XYZ.BasisZ;
+                }
             }
         }
 
@@ -543,6 +654,10 @@ namespace RevitMEPHoleManager
                     try
                     {
                         faceRef = PickHostFace(doc, host, clashPt, row.PipeDir);
+                        if (faceRef == null)
+                        {
+                            continue; // пропускаем, если грань не найдена
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -550,7 +665,19 @@ namespace RevitMEPHoleManager
                     }
 
                     // получаем геометрию грани для расчета точки размещения
-                    var face = (PlanarFace)host.GetGeometryObjectFromReference(faceRef);
+                    Face face;
+                    try
+                    {
+                        face = host.GetGeometryObjectFromReference(faceRef) as Face;
+                        if (face == null)
+                        {
+                            continue; // пропускаем, если не удалось получить геометрию грани
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        continue; // пропускаем при ошибке получения геометрии
+                    }
                     
                     // ────────────────────────────────────────────────────────
                     // УЛУЧШЕННОЕ ПОЗИЦИОНИРОВАНИЕ: учитываем геометрию пересечения
@@ -561,8 +688,8 @@ namespace RevitMEPHoleManager
                     // Если это кластерное отверстие, используем GroupCtr
                     if (row.GroupCtr != null)
                     {
-                        var projGroup = face.Project(row.GroupCtr);
-                        placePt = projGroup?.XYZPoint ?? face.Project(clashPt)?.XYZPoint;
+                        var projGroup = face?.Project(row.GroupCtr);
+                        placePt = projGroup?.XYZPoint ?? face?.Project(clashPt)?.XYZPoint ?? clashPt;
                     }
                     else
                     {
@@ -578,7 +705,7 @@ namespace RevitMEPHoleManager
                         continue; // пропускаем это отверстие
                     }
                     
-                    XYZ normal = face.FaceNormal.Normalize();
+                    XYZ normal = GetFaceNormal(face, placePt);
 
                     // ⬇️⬇️⬇️ НАЧАЛО НОВОГО КОДА: ФИЛЬТР "СКОЛЬЗЯЩИХ" ПЕРЕСЕЧЕНИЙ ⬇️⬇️⬇️
                     // Вычисляем скалярное произведение между направлением трубы и нормалью грани.

@@ -52,24 +52,55 @@ namespace RevitMEPHoleManager
     {
         /// <summary>
         /// Строит локальную систему координат хоста (Right-Up-Normal)
+        /// Поддерживает прямые и дуговые стены
         /// </summary>
-        private static Transform GetHostLocalCS(Element host)
+        private static Transform GetHostLocalCS(Element host, XYZ intersectionPoint = null)
         {
             // 1️⃣ Вычисляем ортонормированный базис
             XYZ right, up, normal;
 
-            if (host is Wall wall &&
-                wall.Location is LocationCurve lc &&
-                lc.Curve is Line line)
+            if (host is Wall wall && wall.Location is LocationCurve lc)
             {
-                right  = line.Direction.Normalize(); // по оси стены
-                up     = XYZ.BasisZ;                 // мировое «вверх»
-                normal = right.CrossProduct(up).Normalize();
+                up = XYZ.BasisZ; // мировое «вверх»
+
+                if (lc.Curve is Line line)
+                {
+                    // Прямая стена
+                    right = line.Direction.Normalize(); // по оси стены
+                    normal = right.CrossProduct(up).Normalize();
+                }
+                else if (lc.Curve is Arc arc)
+                {
+                    // Дуговая стена: вычисляем касательную в точке пересечения
+                    if (intersectionPoint != null)
+                    {
+                        // Находим параметр точки на дуге
+                        double param = arc.Project(intersectionPoint).Parameter;
+                        
+                        // Касательная в этой точке
+                        right = arc.ComputeDerivatives(param, false).BasisX.Normalize();
+                        normal = right.CrossProduct(up).Normalize();
+                    }
+                    else
+                    {
+                        // Fallback: касательная в середине дуги
+                        double midParam = (arc.GetEndParameter(0) + arc.GetEndParameter(1)) / 2.0;
+                        right = arc.ComputeDerivatives(midParam, false).BasisX.Normalize();
+                        normal = right.CrossProduct(up).Normalize();
+                    }
+                }
+                else
+                {
+                    // Fallback для других типов кривых
+                    right = XYZ.BasisX;
+                    up = XYZ.BasisY;
+                    normal = XYZ.BasisZ;
+                }
             }
-            else                        // плита или «по умолчанию»
+            else // плита или «по умолчанию»
             {
-                right  = XYZ.BasisX;
-                up     = XYZ.BasisY;
+                right = XYZ.BasisX;
+                up = XYZ.BasisY;
                 normal = XYZ.BasisZ;
             }
 
@@ -78,7 +109,7 @@ namespace RevitMEPHoleManager
             t.BasisX = right;
             t.BasisY = up;
             t.BasisZ = normal;
-            t.Origin = XYZ.Zero;        // начало совпадает с мировым
+            t.Origin = intersectionPoint ?? XYZ.Zero; // центрируем в точке пересечения
             return t;
         }
         /// <returns>(wRnd, wRec, fRnd, fRec, rows, hostStats)</returns>
@@ -153,7 +184,7 @@ namespace RevitMEPHoleManager
                     }
 
                     // переводим в локальную систему координат хоста
-                    Transform hostCS = GetHostLocalCS(host);
+                    Transform hostCS = GetHostLocalCS(host, center);
                     XYZ localCtr = hostCS.Inverse.OfPoint(center);
                     
                     // ось трассы в локальных координатах хоста
