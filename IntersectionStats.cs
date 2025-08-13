@@ -35,6 +35,11 @@ namespace RevitMEPHoleManager
         public double CenterXft { get; set; }      // X-координата центра (футы)
         public double CenterYft { get; set; }      // Y-координата центра (футы)
         public double CenterZft { get; set; }      // удобнее, чем XYZ Center
+        
+        // Координаты в миллиметрах для отображения
+        public double CenterXmm => CenterXft * 304.8;
+        public double CenterYmm => CenterYft * 304.8; 
+        public double CenterZmm => CenterZft * 304.8;
         public double? GapMm { get; set; }   // расстояние до соседа (< mergeDist) либо null
         public XYZ PipeDir { get; set; }   // уни.направление оси (уже в координатах хоста)
         public XYZ LocalCtr { get; set; }   // центр в системе хоста

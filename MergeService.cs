@@ -157,12 +157,17 @@ namespace RevitMEPHoleManager
             double avgX = cluster.Average(r => r.Center.X);
             double avgY = cluster.Average(r => r.Center.Y);
             double avgZ = cluster.Average(r => r.Center.Z);
+            XYZ clusterCenter = new XYZ(avgX, avgY, avgZ);
 
             var row = cluster[0];
             row.HoleWidthMm  = holeWmm;
             row.HoleHeightMm = holeHmm;
             row.HoleTypeName = SafeTypeName(holeWmm, holeHmm);
-            row.GroupCtr     = new XYZ(avgX, avgY, avgZ);
+            row.GroupCtr     = clusterCenter;
+            row.Center       = clusterCenter;  // обновляем основной центр для таблицы
+            row.CenterXft    = avgX;           // обновляем координаты для отображения
+            row.CenterYft    = avgY;
+            row.CenterZft    = avgZ;
             row.IsMerged     = true;
             return row;
         }

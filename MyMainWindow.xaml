@@ -56,6 +56,9 @@
                     <DataGridTextColumn Header="Хост" Binding="{Binding Host}" Width="110"/>
                     <DataGridTextColumn Header="Host Id" Binding="{Binding HostId}" Width="65"/>
                     <DataGridTextColumn Header="MEP Id" Binding="{Binding MepId}" Width="65"/>
+                    <DataGridTextColumn Header="X, мм" Binding="{Binding CenterXmm, StringFormat=N0}" Width="70"/>
+                    <DataGridTextColumn Header="Y, мм" Binding="{Binding CenterYmm, StringFormat=N0}" Width="70"/>
+                    <DataGridTextColumn Header="Z, мм" Binding="{Binding CenterZmm, StringFormat=N0}" Width="70"/>
                     <DataGridTextColumn Header="Форма" Binding="{Binding Shape}" Width="75"/>
                     <DataGridTextColumn Header="Наклон" Binding="{Binding IsDiagonal, Converter={StaticResource BoolToYesNoConverter}}" Width="60"/>
                     <DataGridTextColumn Header="Ø / Шир., мм" Binding="{Binding ElemWidthMm, StringFormat=N0}" Width="85"/>
