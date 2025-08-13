@@ -99,18 +99,37 @@ namespace RevitMEPHoleManager
             }
             else   // прямоугольная/квадратная секция
             {
-                // УПРОЩЕННЫЙ подход для прямоугольных воздуховодов
-                // Для большинства случаев воздуховоды идут горизонтально и перпендикулярно стенам
+                // Для прямоугольных воздуховодов нужно правильно сопоставить размеры с осями стены
                 
-                // Учитываем наклон только если труба сильно наклонена
-                double cosTheta = Math.Abs(axZ);  // cos угла между осью трубы и нормалью стены
-                cosTheta = Math.Max(0.5, cosTheta);  // ограничиваем минимальное значение
+                // Учитываем наклон
+                double cosTheta = Math.Abs(axZ);
+                cosTheta = Math.Max(0.5, cosTheta);
                 
-                // Простой расчет с учетом наклона
-                holeWmm = elemWmm / cosTheta + 2 * clearanceMm;
-                holeHmm = elemHmm / cosTheta + 2 * clearanceMm;
+                // Определяем ориентацию воздуховода относительно стены
+                // ИСПРАВЛЕНИЕ: В локальной системе стены X и Y перепутаны местами
+                // axisLocal.Y - на самом деле горизонтальная ось (вдоль стены) 
+                // axisLocal.X - на самом деле вертикальная ось (высота)
                 
-                System.Diagnostics.Debug.WriteLine($"  Прямоугольный: cosTheta={cosTheta:F3}, элемент {elemWmm:F0}×{elemHmm:F0}");
+                double absX = Math.Abs(axisLocal.X);
+                double absY = Math.Abs(axisLocal.Y);
+                
+                // Меняем логику: Y - горизонталь, X - вертикаль
+                if (absY > absX)
+                {
+                    // Воздуховод идет преимущественно горизонтально (вдоль стены)
+                    // elemWmm (ширина) влияет на ширину отверстия, elemHmm (высота) - на высоту
+                    holeWmm = elemWmm / cosTheta + 2 * clearanceMm;
+                    holeHmm = elemHmm / cosTheta + 2 * clearanceMm;
+                    System.Diagnostics.Debug.WriteLine($"  Горизонтальный воздуховод: W={elemWmm:F0}→{holeWmm:F0}, H={elemHmm:F0}→{holeHmm:F0}");
+                }
+                else
+                {
+                    // Воздуховод идет преимущественно вертикально
+                    // Поворачиваем сопоставление: elemWmm влияет на высоту, elemHmm - на ширину
+                    holeWmm = elemHmm / cosTheta + 2 * clearanceMm;
+                    holeHmm = elemWmm / cosTheta + 2 * clearanceMm;
+                    System.Diagnostics.Debug.WriteLine($"  Вертикальный воздуховод: W={elemHmm:F0}→{holeWmm:F0}, H={elemWmm:F0}→{holeHmm:F0}");
+                }
             }
             
             // ДИАГНОСТИКА: логируем результат
