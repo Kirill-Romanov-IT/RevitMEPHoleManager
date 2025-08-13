@@ -58,6 +58,7 @@
     <Compile Include="HostStatRow.cs" />
     <Compile Include="MergeService.cs" />
     <Compile Include="PipeRow.cs" />
+    <Compile Include="HoleGeometry.cs" />
     <Compile Include="SizeHelper.cs" />
     <Compile Include="IntersectionStats.cs" />
     <Compile Include="MyMainWindow.xaml.cs">

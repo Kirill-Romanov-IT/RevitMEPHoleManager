@@ -900,12 +900,13 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            if (mergeOn && mergeDist > 0)
-            {
-                clashList = MergeService.Merge(clashList, mergeDist, clearance, logger).ToList();
-                LogBox.Text = logger.ToString();
-                LogBox.ScrollToEnd();
-            }
+            // Убираем предварительное объединение - будем делать это после размещения
+            // if (mergeOn)
+            // {
+            //     clashList = HoleGeometry.MergeByIntersection(clashList, clearance, logger).ToList();
+            //     LogBox.Text = logger.ToString();
+            //     LogBox.ScrollToEnd();
+            // }
             //─────────────────────────────────────────────
 
             /* --- 3.1   DataGrid с детализацией пересечений
@@ -1225,8 +1226,36 @@ namespace RevitMEPHoleManager
                 tr.Commit();
             }
 
-            MessageBox.Show($"Вставлено отверстий: {placed}",
-                            "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+            // ═══ НОВАЯ ЛОГИКА: ДВУХЭТАПНОЕ ОБЪЕДИНЕНИЕ ОТВЕРСТИЙ ═══
+            if (placed > 0)
+            {
+                logger.Add("═══ ЭТАП 2: АНАЛИЗ РАЗМЕЩЕННЫХ ОТВЕРСТИЙ ═══");
+                
+                if (mergeOn)
+                {
+                    int merged = AnalyzeAndMergeHoles(doc, family, mergeDist, logger);
+                    LogBox.Text = logger.ToString();
+                    LogBox.ScrollToEnd();
+                    
+                    MessageBox.Show($"Размещено отверстий: {placed}\nОбъединено кластеров: {merged}",
+                                    "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    // Анализируем пересечения БЕЗ объединения - только для диагностики
+                    AnalyzeHoleIntersections(doc, family, mergeDist, logger);
+                    LogBox.Text = logger.ToString();
+                    LogBox.ScrollToEnd();
+                    
+                    MessageBox.Show($"Вставлено отверстий: {placed}",
+                                    "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            else
+            {
+                MessageBox.Show($"Вставлено отверстий: {placed}",
+                                "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
 
         /// <summary>
@@ -1258,6 +1287,415 @@ namespace RevitMEPHoleManager
                 if (p != null) return p;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Двухэтапный анализ: находит размещенные отверстия и объединяет пересекающиеся
+        /// </summary>
+        private int AnalyzeAndMergeHoles(Document doc, Family holeFamily, double mergeThresholdMm, HoleLogger log)
+        {
+            int mergedCount = 0;
+            
+            try
+            {
+                // Шаг 1: Найти все размещенные экземпляры семейства отверстий
+                var placedHoles = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilyInstance))
+                    .Cast<FamilyInstance>()
+                    .Where(fi => fi.Symbol.Family.Id == holeFamily.Id)
+                    .ToList();
+
+                log.Add($"Найдено размещенных отверстий: {placedHoles.Count}");
+                log.Add($"Порог объединения: {mergeThresholdMm}мм");
+
+                if (placedHoles.Count < 2) return 0; // Нет смысла объединять
+
+                // Шаг 2: Группируем по хост-элементу (стена/плита)
+                var hostGroups = placedHoles
+                    .Where(hole => hole.Host != null)
+                    .GroupBy(hole => hole.Host.Id.IntegerValue)
+                    .Where(group => group.Count() > 1) // Только группы с несколькими отверстиями
+                    .ToList();
+
+                log.Add($"Хостов с несколькими отверстиями: {hostGroups.Count}");
+
+                // ДИАГНОСТИКА: покажем все отверстия и их позиции
+                foreach (var hole in placedHoles)
+                {
+                    var pos = GetLocalPosition(hole);
+                    var hostId = hole.Host?.Id.IntegerValue ?? -1;
+                    log.Add($"  Отверстие {hole.Id}: Host={hostId}, позиция=({pos?.X * 304.8:F0}, {pos?.Y * 304.8:F0}, {pos?.Z * 304.8:F0})");
+                }
+
+                using (Transaction tr = new Transaction(doc, "Merge intersecting holes"))
+                {
+                    tr.Start();
+
+                    foreach (var hostGroup in hostGroups)
+                    {
+                        log.Add($"Анализ хоста ID {hostGroup.Key}:");
+                        
+                        var holeInstances = hostGroup.ToList();
+                        var processed = new HashSet<FamilyInstance>();
+                        
+                        // Шаг 3: Находим пересекающиеся отверстия
+                        foreach (var hole1 in holeInstances)
+                        {
+                            if (processed.Contains(hole1)) continue;
+
+                            var cluster = new List<FamilyInstance> { hole1 };
+                            processed.Add(hole1);
+
+                            // Ищем все отверстия, пересекающиеся с текущим кластером
+                            bool expanded = true;
+                            while (expanded)
+                            {
+                                expanded = false;
+                                foreach (var hole2 in holeInstances)
+                                {
+                                    if (processed.Contains(hole2)) continue;
+
+                                    // Проверяем пересечение с любым отверстием в кластере
+                                    if (cluster.Any(clusterHole => HolesIntersect(clusterHole, hole2, mergeThresholdMm, log)))
+                                    {
+                                        cluster.Add(hole2);
+                                        processed.Add(hole2);
+                                        expanded = true;
+                                        log.Add($"    Добавлено отверстие {hole2.Id} в кластер");
+                                    }
+                                }
+                            }
+
+                            // Шаг 4: Если в кластере больше одного отверстия - объединяем
+                            if (cluster.Count > 1)
+                            {
+                                var mergedHole = CreateMergedHole(doc, cluster, holeFamily, log);
+                                if (mergedHole != null)
+                                {
+                                    // Удаляем исходные отверстия
+                                    foreach (var oldHole in cluster)
+                                    {
+                                        doc.Delete(oldHole.Id);
+                                    }
+                                    mergedCount++;
+                                    log.Add($"    ✅ Создан объединенный кластер ({cluster.Count} отверстий)");
+                                }
+                            }
+                        }
+                    }
+
+                tr.Commit();
+            }
+
+                log.Add($"Итого объединено кластеров: {mergedCount}");
+            }
+            catch (Exception ex)
+            {
+                log.Add($"Ошибка при объединении отверстий: {ex.Message}");
+            }
+
+            return mergedCount;
+        }
+
+        /// <summary>
+        /// Анализирует пересечения отверстий БЕЗ объединения - только для диагностики
+        /// </summary>
+        private void AnalyzeHoleIntersections(Document doc, Family holeFamily, double mergeThresholdMm, HoleLogger log)
+        {
+            try
+            {
+                // Найти все размещенные экземпляры семейства отверстий
+                var placedHoles = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilyInstance))
+                    .Cast<FamilyInstance>()
+                    .Where(fi => fi.Symbol.Family.Id == holeFamily.Id)
+                    .ToList();
+
+                log.Add($"Найдено размещенных отверстий: {placedHoles.Count}");
+                log.Add($"Порог объединения: {mergeThresholdMm}мм (анализ без объединения)");
+
+                if (placedHoles.Count < 2)
+                {
+                    log.Add("Менее 2 отверстий - анализ пересечений невозможен");
+                    return;
+                }
+
+                // ДИАГНОСТИКА: покажем все отверстия и их позиции
+                foreach (var hole in placedHoles)
+                {
+                    var pos = GetLocalPosition(hole);
+                    var hostId = hole.Host?.Id.IntegerValue ?? -1;
+                    var width = GetHoleWidth(hole);
+                    var height = GetHoleHeight(hole);
+                    log.Add($"  Отверстие {hole.Id}: Host={hostId}, размер={width:F0}×{height:F0}, позиция=({pos?.X * 304.8:F0}, {pos?.Y * 304.8:F0}, {pos?.Z * 304.8:F0})");
+                }
+
+                // Группируем по хост-элементу (стена/плита)
+                var hostGroups = placedHoles
+                    .Where(hole => hole.Host != null)
+                    .GroupBy(hole => hole.Host.Id.IntegerValue)
+                    .ToList();
+
+                log.Add($"Хостов с отверстиями: {hostGroups.Count}");
+
+                int totalPairs = 0;
+                int intersectingPairs = 0;
+
+                foreach (var hostGroup in hostGroups)
+                {
+                    log.Add($"═══ АНАЛИЗ ХОСТА ID {hostGroup.Key} ═══");
+                    
+                    var holeInstances = hostGroup.ToList();
+                    if (holeInstances.Count < 2)
+                    {
+                        log.Add("  Только одно отверстие - пересечений нет");
+                        continue;
+                    }
+
+                    // Проверяем все пары отверстий на этом хосте
+                    for (int i = 0; i < holeInstances.Count; i++)
+                    {
+                        for (int j = i + 1; j < holeInstances.Count; j++)
+                        {
+                            totalPairs++;
+                            bool intersects = HolesIntersect(holeInstances[i], holeInstances[j], mergeThresholdMm, log);
+                            if (intersects) intersectingPairs++;
+                        }
+                    }
+                }
+
+                log.Add($"═══ ИТОГ АНАЛИЗА ПЕРЕСЕЧЕНИЙ ═══");
+                log.Add($"Всего проверено пар: {totalPairs}");
+                log.Add($"Пересекающихся пар: {intersectingPairs}");
+                log.Add($"Не пересекающихся пар: {totalPairs - intersectingPairs}");
+            }
+            catch (Exception ex)
+            {
+                log.Add($"Ошибка при анализе пересечений: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Проверяет пересечение двух отверстий в пространстве с учетом порога объединения
+        /// </summary>
+        private bool HolesIntersect(FamilyInstance hole1, FamilyInstance hole2, double mergeThresholdMm, HoleLogger log)
+        {
+            try
+            {
+                // Получаем размеры отверстий
+                double w1 = GetHoleWidth(hole1);
+                double h1 = GetHoleHeight(hole1);
+                double w2 = GetHoleWidth(hole2);
+                double h2 = GetHoleHeight(hole2);
+
+                // Получаем позиции в локальных координатах стены
+                XYZ pos1 = GetLocalPosition(hole1);
+                XYZ pos2 = GetLocalPosition(hole2);
+
+                log.Add($"    Проверка: {hole1.Id} vs {hole2.Id}");
+                log.Add($"      Размеры: {w1:F0}×{h1:F0} vs {w2:F0}×{h2:F0}");
+                log.Add($"      Позиции: ({pos1?.X * 304.8:F0}, {pos1?.Y * 304.8:F0}) vs ({pos2?.X * 304.8:F0}, {pos2?.Y * 304.8:F0})");
+
+                if (pos1 == null || pos2 == null)
+                {
+                    log.Add($"      ❌ Позиция недоступна: pos1={pos1 != null}, pos2={pos2 != null}");
+                    return false;
+                }
+
+                // Добавляем буферную зону (половина порога объединения)
+                double bufferFt = mergeThresholdMm / 2.0 / 304.8; // мм → футы
+                
+                // Вычисляем расширенные границы отверстий (в футах)
+                double minX1 = pos1.X - w1 / 2.0 / 304.8 - bufferFt;
+                double maxX1 = pos1.X + w1 / 2.0 / 304.8 + bufferFt;
+                double minY1 = pos1.Y - h1 / 2.0 / 304.8 - bufferFt;
+                double maxY1 = pos1.Y + h1 / 2.0 / 304.8 + bufferFt;
+
+                double minX2 = pos2.X - w2 / 2.0 / 304.8 - bufferFt;
+                double maxX2 = pos2.X + w2 / 2.0 / 304.8 + bufferFt;
+                double minY2 = pos2.Y - h2 / 2.0 / 304.8 - bufferFt;
+                double maxY2 = pos2.Y + h2 / 2.0 / 304.8 + bufferFt;
+
+                // Добавляем проверку по Z координате (высота в стене)
+                double minZ1 = pos1.Z - h1 / 2.0 / 304.8 - bufferFt;
+                double maxZ1 = pos1.Z + h1 / 2.0 / 304.8 + bufferFt;
+                double minZ2 = pos2.Z - h2 / 2.0 / 304.8 - bufferFt;
+                double maxZ2 = pos2.Z + h2 / 2.0 / 304.8 + bufferFt;
+
+                // Проверяем пересечение расширенных прямоугольников в 3D
+                bool intersects = !(maxX1 < minX2 || minX1 > maxX2 || 
+                                  maxY1 < minY2 || minY1 > maxY2 ||
+                                  maxZ1 < minZ2 || minZ1 > maxZ2);
+                
+                // Вычисляем реальное расстояние между центрами для логирования (3D расстояние)
+                double distanceMm = Math.Sqrt(Math.Pow((pos2.X - pos1.X) * 304.8, 2) + 
+                                            Math.Pow((pos2.Y - pos1.Y) * 304.8, 2) +
+                                            Math.Pow((pos2.Z - pos1.Z) * 304.8, 2));
+
+                log.Add($"      Буфер: {bufferFt * 304.8:F0}мм");
+                log.Add($"      Границы1: X[{minX1 * 304.8:F0}..{maxX1 * 304.8:F0}] Y[{minY1 * 304.8:F0}..{maxY1 * 304.8:F0}] Z[{minZ1 * 304.8:F0}..{maxZ1 * 304.8:F0}]");
+                log.Add($"      Границы2: X[{minX2 * 304.8:F0}..{maxX2 * 304.8:F0}] Y[{minY2 * 304.8:F0}..{maxY2 * 304.8:F0}] Z[{minZ2 * 304.8:F0}..{maxZ2 * 304.8:F0}]");
+                log.Add($"      3D расстояние между центрами: {distanceMm:F0}мм");
+
+                if (intersects)
+                {
+                    log.Add($"      ✅ Объединение: {hole1.Id} ∩ {hole2.Id}, расстояние: {distanceMm:F0}мм < порог: {mergeThresholdMm:F0}мм");
+                }
+                else
+                {
+                    log.Add($"      ❌ Пропуск: {hole1.Id} - {hole2.Id}, расстояние: {distanceMm:F0}мм, нет пересечения расширенных границ");
+                }
+
+                return intersects;
+            }
+            catch (Exception ex)
+            {
+                log.Add($"    Ошибка проверки пересечения {hole1.Id}-{hole2.Id}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Создает объединенное отверстие для кластера пересекающихся отверстий
+        /// </summary>
+        private FamilyInstance CreateMergedHole(Document doc, List<FamilyInstance> cluster, Family holeFamily, HoleLogger log)
+        {
+            try
+            {
+                // Вычисляем границы объединенного отверстия
+                var positions = cluster.Select(GetLocalPosition).Where(p => p != null).ToList();
+                var widths = cluster.Select(GetHoleWidth).ToList();
+                var heights = cluster.Select(GetHoleHeight).ToList();
+
+                if (!positions.Any()) return null;
+
+                // Находим крайние точки всех отверстий
+                var bounds = positions.Zip(widths.Zip(heights, (w, h) => new { Width = w, Height = h }), 
+                    (pos, size) => new
+                    {
+                        MinX = pos.X - size.Width / 2.0 / 304.8,
+                        MaxX = pos.X + size.Width / 2.0 / 304.8,
+                        MinY = pos.Y - size.Height / 2.0 / 304.8,
+                        MaxY = pos.Y + size.Height / 2.0 / 304.8,
+                        Z = pos.Z
+                    }).ToList();
+
+                double minX = bounds.Min(b => b.MinX);
+                double maxX = bounds.Max(b => b.MaxX);
+                double minY = bounds.Min(b => b.MinY);
+                double maxY = bounds.Max(b => b.MaxY);
+                double avgZ = bounds.Average(b => b.Z);
+
+                // Размеры объединенного отверстия + дополнительный зазор
+                double mergedWidthMm = (maxX - minX) * 304.8 + 100; // +100мм запас
+                double mergedHeightMm = (maxY - minY) * 304.8 + 100; // +100мм запас
+                
+                // Центр объединенного отверстия
+                XYZ mergedCenter = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, avgZ);
+
+                log.Add($"    Размер объединенного: {mergedWidthMm:F0}×{mergedHeightMm:F0}мм");
+                log.Add($"    Границы: X[{minX * 304.8:F0}..{maxX * 304.8:F0}] Y[{minY * 304.8:F0}..{maxY * 304.8:F0}]");
+
+                // Создаем типоразмер для объединенного отверстия
+                string typeName = $"Прям. {Math.Ceiling(mergedWidthMm)}×{Math.Ceiling(mergedHeightMm)}";
+                var firstHole = cluster.First();
+                var hostElement = firstHole.Host;
+
+                // Находим или создаем типоразмер
+                FamilySymbol mergedSymbol = holeFamily.GetFamilySymbolIds()
+                    .Select(id => doc.GetElement(id) as FamilySymbol)
+                    .FirstOrDefault(s => s.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase));
+
+                if (mergedSymbol == null)
+                {
+                    mergedSymbol = firstHole.Symbol.Duplicate(typeName) as FamilySymbol;
+                    SetSize(mergedSymbol, mergedWidthMm, mergedHeightMm);
+                }
+
+                // Размещаем объединенное отверстие
+                if (!mergedSymbol.IsActive) mergedSymbol.Activate();
+
+                // Получаем направление первого отверстия для ориентации
+                XYZ refDirection = XYZ.BasisX; // fallback
+                var firstLocation = firstHole.Location as LocationPoint;
+                if (firstLocation != null)
+                {
+                    // Используем ориентацию первого отверстия
+                    var transform = firstHole.GetTransform();
+                    refDirection = transform.BasisX;
+                }
+
+                // Используем хост-элемент как face-based
+                var mergedInstance = doc.Create.NewFamilyInstance(mergedCenter, mergedSymbol, hostElement, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+
+                return mergedInstance;
+            }
+            catch (Exception ex)
+            {
+                log.Add($"    Ошибка создания объединенного отверстия: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Получает ширину отверстия в мм
+        /// </summary>
+        private double GetHoleWidth(FamilyInstance hole)
+        {
+            var widthParam = hole.LookupParameter("Ширина") ?? 
+                           hole.LookupParameter("Width") ??
+                           hole.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
+            
+            if (widthParam != null && widthParam.HasValue)
+            {
+                return UnitUtils.ConvertFromInternalUnits(widthParam.AsDouble(), UnitTypeId.Millimeters);
+            }
+            return 200; // fallback
+        }
+
+        /// <summary>
+        /// Получает высоту отверстия в мм
+        /// </summary>
+        private double GetHoleHeight(FamilyInstance hole)
+        {
+            var heightParam = hole.LookupParameter("Высота") ?? 
+                            hole.LookupParameter("Height") ??
+                            hole.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
+            
+            if (heightParam != null && heightParam.HasValue)
+            {
+                return UnitUtils.ConvertFromInternalUnits(heightParam.AsDouble(), UnitTypeId.Millimeters);
+            }
+            return 200; // fallback
+        }
+
+        /// <summary>
+        /// Получает локальную позицию отверстия относительно хоста
+        /// </summary>
+        private XYZ GetLocalPosition(FamilyInstance hole)
+        {
+            try
+            {
+                var location = hole.Location as LocationPoint;
+                if (location?.Point != null)
+                {
+                    return location.Point;
+                }
+                
+                // Fallback: попробуем получить из transform
+                var transform = hole.GetTransform();
+                if (transform != null)
+                {
+                    return transform.Origin;
+                }
+                
+                return null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка получения позиции отверстия {hole.Id}: {ex.Message}");
+                return null;
+            }
         }
     }
 
