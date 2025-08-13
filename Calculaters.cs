@@ -67,6 +67,10 @@ namespace RevitMEPHoleManager
             out double holeWmm,
             out double holeHmm)
         {
+            // ДИАГНОСТИКА: логируем входные данные
+            System.Diagnostics.Debug.WriteLine($"GetHoleSizeIncline: isRound={isRound}, elemW={elemWmm:F0}mm, elemH={elemHmm:F0}mm, clearance={clearanceMm:F0}mm");
+            System.Diagnostics.Debug.WriteLine($"  axisLocal=({axisLocal.X:F3}, {axisLocal.Y:F3}, {axisLocal.Z:F3})");
+            
             // Вектор оси трубы в локальных координатах хоста (Right-Up-Normal)
             // axisLocal.X = проекция на ось Right (вдоль стены)
             // axisLocal.Y = проекция на ось Up (вертикаль)
@@ -95,40 +99,22 @@ namespace RevitMEPHoleManager
             }
             else   // прямоугольная/квадратная секция
             {
-                // Для прямоугольного сечения нужно учесть поворот прямоугольника в плоскости стены
-                // Консервативный подход: рассчитываем габариты повёрнутого прямоугольника
+                // УПРОЩЕННЫЙ подход для прямоугольных воздуховодов
+                // Для большинства случаев воздуховоды идут горизонтально и перпендикулярно стенам
                 
-                // Проекция осей прямоугольного сечения на плоскость стены
-                // Ось сечения (вдоль трубы) проектируется как axisLocal
-                // Поперечные оси сечения нужно спроектировать на плоскость XY
+                // Учитываем наклон только если труба сильно наклонена
+                double cosTheta = Math.Abs(axZ);  // cos угла между осью трубы и нормалью стены
+                cosTheta = Math.Max(0.5, cosTheta);  // ограничиваем минимальное значение
                 
-                // Нормализованная проекция оси трубы на плоскость стены (XY)
-                double projLength = Math.Sqrt(axX * axX + axY * axY);
-                projLength = Math.Max(1e-6, projLength);
+                // Простой расчет с учетом наклона
+                holeWmm = elemWmm / cosTheta + 2 * clearanceMm;
+                holeHmm = elemHmm / cosTheta + 2 * clearanceMm;
                 
-                double unitX = axX / projLength;  // единичный вектор проекции по X
-                double unitY = axY / projLength;  // единичный вектор проекции по Y
-                
-                // Поперечный вектор к проекции (повёрнутый на 90°)
-                double perpX = -unitY;
-                double perpY = unitX;
-                
-                // Габариты повёрнутого прямоугольника в плоскости стены
-                // Для каждой оси (X,Y) находим максимальную проекцию углов прямоугольника
-                double hw = elemWmm / 2;  // полуширина сечения
-                double hh = elemHmm / 2;  // полувысота сечения
-                
-                // Углы прямоугольного сечения при проекции на плоскость стены:
-                double projW = Math.Abs(hw * unitX) + Math.Abs(hh * perpX);
-                double projH = Math.Abs(hw * unitY) + Math.Abs(hh * perpY);
-                
-                // Учитываем также увеличение из-за наклона к плоскости стены
-                double cosTheta = axZ;  // cos угла между осью трубы и нормалью стены
-                cosTheta = Math.Max(1e-3, cosTheta);
-                
-                holeWmm = 2 * projW / cosTheta + 2 * clearanceMm;
-                holeHmm = 2 * projH / cosTheta + 2 * clearanceMm;
+                System.Diagnostics.Debug.WriteLine($"  Прямоугольный: cosTheta={cosTheta:F3}, элемент {elemWmm:F0}×{elemHmm:F0}");
             }
+            
+            // ДИАГНОСТИКА: логируем результат
+            System.Diagnostics.Debug.WriteLine($"  Результат: holeW={holeWmm:F0}mm, holeH={holeHmm:F0}mm");
         }
     }
 }

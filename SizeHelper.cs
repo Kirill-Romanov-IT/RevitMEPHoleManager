@@ -114,6 +114,9 @@ namespace RevitMEPHoleManager
                             {
                                 shape = Math.Abs(wMm - hMm) < 1.0 ? ShapeKind.Square : ShapeKind.Rect;
                             }
+                            
+                            // ДИАГНОСТИКА
+                            System.Diagnostics.Debug.WriteLine($"TryGetDuctSizes (МЕТОД 1): W={wMm:F0}, H={hMm:F0}, Shape={shape}");
                             return true;
                         }
                     }
