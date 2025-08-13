@@ -13,6 +13,22 @@ using Autodesk.Revit.DB.Mechanical; // для Duct
 
 namespace RevitMEPHoleManager
 {
+    /// <summary>
+    /// Конвертер для отображения bool как "Да"/"Нет"
+    /// </summary>
+    public class BoolToYesNoConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            return value is bool b && b ? "Да" : "Нет";
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            return value?.ToString() == "Да";
+        }
+    }
+
     internal sealed class HoleLogger
     {
         private readonly StringBuilder sb = new();
@@ -53,73 +69,65 @@ namespace RevitMEPHoleManager
                 throw new InvalidOperationException($"Не удалось получить грани для элемента {host.Id}");
             }
 
-            // выбираем грань, чья нормаль максимально сонаправлена с осью трубы
+            var pipe = (pipeDir ?? XYZ.BasisZ).Normalize();
+
             var best = refs
-                .Where(r => r != null) // исключаем null references
-                .Select(r =>
+                .Select<Reference, (Reference faceRef, double score, double dist)>(r =>
                 {
-                    Face face;
+                    Face face = null;
+                    try { face = host.GetGeometryObjectFromReference(r) as Face; } catch { }
+                    if (face == null) return (r, double.NegativeInfinity, double.PositiveInfinity);
+
+                    XYZ n;
                     try
                     {
-                        face = host.GetGeometryObjectFromReference(r) as Face;
-                        if (face == null) return (r, 0.0);
-                    }
-                    catch
-                    {
-                        return (r, 0.0);
-                    }
-                    
-                    XYZ faceNormal;
-                    if (face is PlanarFace planarFace)
-                    {
-                        // Плоская грань - используем обычную нормаль
-                        faceNormal = planarFace.FaceNormal.Normalize();
-                    }
-                    else if (face is CylindricalFace cylindricalFace)
-                    {
-                        // Цилиндрическая грань (дуговые стены) - нормаль в точке пересечения
-                        var proj = cylindricalFace.Project(pt);
-                        if (proj != null)
+                        if (face is PlanarFace pf)
+                            n = pf.FaceNormal.Normalize();
+                        else if (face is CylindricalFace cf)
                         {
-                            var uv = proj.UVPoint;
-                            faceNormal = cylindricalFace.ComputeNormal(uv).Normalize();
+                            // Цилиндрическая грань (дуговые стены) - нормаль в точке пересечения
+                            var projection = cf.Project(pt);
+                            if (projection != null)
+                            {
+                                var uv = projection.UVPoint;
+                                n = cf.ComputeNormal(uv).Normalize();
+                            }
+                            else
+                            {
+                                // Fallback: нормаль в центре грани
+                                var box = cf.GetBoundingBox();
+                                var centerUV = new UV((box.Min.U + box.Max.U) / 2, (box.Min.V + box.Max.V) / 2);
+                                n = cf.ComputeNormal(centerUV).Normalize();
+                            }
                         }
                         else
                         {
-                            // Fallback: нормаль в центре грани
-                            var bbox = cylindricalFace.GetBoundingBox();
-                            var centerUV = new UV((bbox.Min.U + bbox.Max.U) / 2, (bbox.Min.V + bbox.Max.V) / 2);
-                            faceNormal = cylindricalFace.ComputeNormal(centerUV).Normalize();
+                            var box = face.GetBoundingBox();
+                            var uv = new UV((box.Min.U + box.Max.U) * 0.5, (box.Min.V + box.Max.V) * 0.5);
+                            n = face.ComputeNormal(uv).Normalize();
                         }
                     }
-                    else
+                    catch
                     {
-                        // Другие типы граней - fallback
-                        try
-                        {
-                            var bbox = face.GetBoundingBox();
-                            var centerUV = new UV((bbox.Min.U + bbox.Max.U) / 2, (bbox.Min.V + bbox.Max.V) / 2);
-                            faceNormal = face.ComputeNormal(centerUV).Normalize();
-                        }
-                        catch
-                        {
-                            return (r, 0.0);
-                        }
+                        n = XYZ.BasisZ;
                     }
-                    
-                    double dot = Math.Abs(faceNormal.DotProduct(pipeDir.Normalize()));
-                    return (r, dot);
+
+                    var dot = Math.Abs(n.DotProduct(pipe));
+                    var proj = face.Project(pt);
+                    var dist = proj?.Distance ?? 1e9;
+
+                    return (r, dot, dist);
                 })
-                .Where(t => t.Item2 > 0.0) // исключаем грани с ошибками
-                .OrderByDescending(t => t.Item2)
+                .OrderByDescending(t => t.score) // сначала по «перпендикулярности»
+                .ThenBy(t => t.dist)             // затем по близости к точке
                 .FirstOrDefault();
 
-            if (best.r == null)
+            if (best.faceRef == null)
             {
                 throw new InvalidOperationException($"Не удалось найти подходящую грань для элемента {host.Id}");
             }
 
-            return best.r;
+            return best.faceRef;
         }
 
         /// <summary>
@@ -312,29 +320,40 @@ namespace RevitMEPHoleManager
         }
 
         /// <summary>
+        /// Устанавливает параметр глубины для отверстия
+        /// </summary>
+        private static void SetDepthParam(Element e, double depthMm)
+        {
+            var p = (e as FamilyInstance)?.LookupParameter("Глубина")
+                 ?? (e as FamilyInstance)?.LookupParameter("Depth")
+                 ?? (e as FamilyInstance)?.LookupParameter("Толщина");
+            if (p != null && !p.IsReadOnly)
+                p.Set(UnitUtils.ConvertToInternalUnits(depthMm, UnitTypeId.Millimeters));
+        }
+
+        /// <summary>
         /// Получает солид хост-элемента для точных геометрических расчетов
         /// </summary>
         private static Solid GetHostSolid(Element host)
         {
-            var options = new Options { ComputeReferences = true };
-            var geomElem = host.get_Geometry(options);
-            
-            foreach (GeometryObject geomObj in geomElem)
+            var options = new Options
             {
-                if (geomObj is Solid solid && solid.Volume > 1e-6)
+                ComputeReferences = true,
+                IncludeNonVisibleObjects = true,
+                DetailLevel = ViewDetailLevel.Fine
+            };
+            
+            var geomElem = host.get_Geometry(options);
+            if (geomElem == null) return null;
+
+            foreach (var geomObj in geomElem)
+            {
+                if (geomObj is Solid s && s.Volume > 1e-6) return s;
+                if (geomObj is GeometryInstance gi)
                 {
-                    return solid;
-                }
-                else if (geomObj is GeometryInstance instance)
-                {
-                    var instGeom = instance.GetInstanceGeometry();
-                    foreach (GeometryObject instObj in instGeom)
-                    {
-                        if (instObj is Solid instSolid && instSolid.Volume > 1e-6)
-                        {
-                            return instSolid;
-                        }
-                    }
+                    var inst = gi.GetInstanceGeometry();
+                    foreach (var o in inst)
+                        if (o is Solid si && si.Volume > 1e-6) return si;
                 }
             }
             return null;
@@ -1569,7 +1588,7 @@ namespace RevitMEPHoleManager
 
                 if (!positions.Any()) return null;
 
-                // Находим крайние точки всех отверстий
+                // Находим крайние точки всех отверстий в 3D
                 var bounds = positions.Zip(widths.Zip(heights, (w, h) => new { Width = w, Height = h }), 
                     (pos, size) => new
                     {
@@ -1577,24 +1596,29 @@ namespace RevitMEPHoleManager
                         MaxX = pos.X + size.Width / 2.0 / 304.8,
                         MinY = pos.Y - size.Height / 2.0 / 304.8,
                         MaxY = pos.Y + size.Height / 2.0 / 304.8,
-                        Z = pos.Z
+                        MinZ = pos.Z - size.Height / 2.0 / 304.8, // используем высоту отверстия для Z
+                        MaxZ = pos.Z + size.Height / 2.0 / 304.8,
+                        CenterPos = pos
                     }).ToList();
 
                 double minX = bounds.Min(b => b.MinX);
                 double maxX = bounds.Max(b => b.MaxX);
                 double minY = bounds.Min(b => b.MinY);
                 double maxY = bounds.Max(b => b.MaxY);
-                double avgZ = bounds.Average(b => b.Z);
+                double minZ = bounds.Min(b => b.MinZ);
+                double maxZ = bounds.Max(b => b.MaxZ);
 
-                // Размеры объединенного отверстия + дополнительный зазор
+                // Размеры объединенного отверстия по крайним точкам + дополнительный зазор
                 double mergedWidthMm = (maxX - minX) * 304.8 + 100; // +100мм запас
                 double mergedHeightMm = (maxY - minY) * 304.8 + 100; // +100мм запас
+                double mergedDepthMm = (maxZ - minZ) * 304.8 + 100; // глубина объединенного отверстия
                 
-                // Центр объединенного отверстия
-                XYZ mergedCenter = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, avgZ);
+                // Центр объединенного отверстия - геометрический центр области пересечения
+                XYZ mergedCenter = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
 
-                log.Add($"    Размер объединенного: {mergedWidthMm:F0}×{mergedHeightMm:F0}мм");
-                log.Add($"    Границы: X[{minX * 304.8:F0}..{maxX * 304.8:F0}] Y[{minY * 304.8:F0}..{maxY * 304.8:F0}]");
+                log.Add($"    Размер объединенного: {mergedWidthMm:F0}×{mergedHeightMm:F0}мм (глубина: {mergedDepthMm:F0}мм)");
+                log.Add($"    Границы: X[{minX * 304.8:F0}..{maxX * 304.8:F0}] Y[{minY * 304.8:F0}..{maxY * 304.8:F0}] Z[{minZ * 304.8:F0}..{maxZ * 304.8:F0}]");
+                log.Add($"    Центр объединения: ({mergedCenter.X * 304.8:F0}, {mergedCenter.Y * 304.8:F0}, {mergedCenter.Z * 304.8:F0})");
 
                 // Создаем типоразмер для объединенного отверстия
                 string typeName = $"Прям. {Math.Ceiling(mergedWidthMm)}×{Math.Ceiling(mergedHeightMm)}";
@@ -1615,18 +1639,191 @@ namespace RevitMEPHoleManager
                 // Размещаем объединенное отверстие
                 if (!mergedSymbol.IsActive) mergedSymbol.Activate();
 
-                // Получаем направление первого отверстия для ориентации
-                XYZ refDirection = XYZ.BasisX; // fallback
-                var firstLocation = firstHole.Location as LocationPoint;
-                if (firstLocation != null)
+                // Получаем ПРАВИЛЬНОЕ направление для поиска грани
+                XYZ pickDir;
+                XYZ refDirection = XYZ.BasisX; // для размещения семейства
+
+                if (hostElement is Wall w)
                 {
-                    // Используем ориентацию первого отверстия
-                    var transform = firstHole.GetTransform();
-                    refDirection = transform.BasisX;
+                    // Нормаль стены (перпендикуляр к её плоскости)
+                    pickDir = w.Orientation.Normalize();
+
+                    // Подправим знак по ориентации существующего отверстия
+                    var faceOrient = firstHole.FacingOrientation.Normalize();
+                    if (pickDir.DotProduct(faceOrient) < 0) pickDir = -pickDir;
+                    
+                    // ВАЖНО: refDirection должен быть ПЕРПЕНДИКУЛЯРЕН к нормали грани
+                    // Для стены: если pickDir - это нормаль, выберем перпендикулярное направление
+                    log.Add($"    Анализ стены: pickDir.Z={pickDir.Z:F3}, pickDir.Y={pickDir.Y:F3}, pickDir.X={pickDir.X:F3}");
+                    
+                    // Выбираем наиболее подходящее базовое направление
+                    if (Math.Abs(pickDir.X) < 0.1) // нормаль не по X
+                        refDirection = XYZ.BasisX;
+                    else if (Math.Abs(pickDir.Y) < 0.1) // нормаль не по Y  
+                        refDirection = XYZ.BasisY;
+                    else if (Math.Abs(pickDir.Z) < 0.1) // нормаль не по Z
+                        refDirection = XYZ.BasisZ;
+                    else
+                        refDirection = XYZ.BasisZ; // fallback
+                        
+                    log.Add($"    Выбрано refDirection для стены: ({refDirection.X:F3}, {refDirection.Y:F3}, {refDirection.Z:F3})");
+                }
+                else if (hostElement is Floor)
+                {
+                    pickDir = XYZ.BasisZ; // сквозь плиту
+                    var faceOrient = firstHole.FacingOrientation.Normalize();
+                    if (pickDir.DotProduct(faceOrient) < 0) pickDir = -pickDir;
+                    
+                    // Для плиты: если pickDir = Z, то refDirection = X или Y
+                    refDirection = XYZ.BasisX; // горизонтальное направление для плит
+                }
+                else
+                {
+                    // Fallback — используем направления от первого отверстия
+                    pickDir = firstHole.FacingOrientation.Normalize();
+                    
+                    // Попробуем взять направление размещения от первого отверстия
+                    var firstTransform = firstHole.GetTransform();
+                    if (firstTransform != null)
+                    {
+                        refDirection = firstTransform.BasisX.Normalize();
+                        // Убедимся что это направление не параллельно pickDir
+                        if (Math.Abs(refDirection.DotProduct(pickDir)) > 0.9)
+                        {
+                            refDirection = firstTransform.BasisY.Normalize();
+                        }
+                    }
+                    else
+                    {
+                        // Найдем перпендикулярное направление к pickDir
+                        if (Math.Abs(pickDir.DotProduct(XYZ.BasisX)) < 0.9)
+                            refDirection = XYZ.BasisX;
+                        else if (Math.Abs(pickDir.DotProduct(XYZ.BasisY)) < 0.9)
+                            refDirection = XYZ.BasisY;
+                        else
+                            refDirection = XYZ.BasisZ;
+                    }
                 }
 
-                // Используем хост-элемент как face-based
-                var mergedInstance = doc.Create.NewFamilyInstance(mergedCenter, mergedSymbol, hostElement, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                log.Add($"    Направление поиска: ({pickDir.X:F3}, {pickDir.Y:F3}, {pickDir.Z:F3})");
+                log.Add($"    Направление размещения: ({refDirection.X:F3}, {refDirection.Y:F3}, {refDirection.Z:F3})");
+                
+                // Проверим угол между направлениями
+                var dotProduct = Math.Abs(pickDir.DotProduct(refDirection));
+                log.Add($"    Угол между направлениями (dot): {dotProduct:F3} (должен быть < 0.9)");
+                
+                // Если все еще параллельны, принудительно исправим
+                if (dotProduct > 0.9)
+                {
+                    log.Add($"    ⚠️ Направления параллельны! Принудительно меняем refDirection");
+                    
+                    // Найдем любое перпендикулярное направление
+                    if (Math.Abs(pickDir.X) < 0.9)
+                        refDirection = XYZ.BasisX;
+                    else if (Math.Abs(pickDir.Y) < 0.9)
+                        refDirection = XYZ.BasisY;
+                    else if (Math.Abs(pickDir.Z) < 0.9)
+                        refDirection = XYZ.BasisZ;
+                    else
+                    {
+                        // Создаем перпендикулярный вектор вручную
+                        refDirection = new XYZ(-pickDir.Y, pickDir.X, 0).Normalize();
+                        if (refDirection.GetLength() < 0.1) // если получился нулевой
+                            refDirection = new XYZ(0, -pickDir.Z, pickDir.Y).Normalize();
+                    }
+                    
+                    log.Add($"    Новое направление размещения: ({refDirection.X:F3}, {refDirection.Y:F3}, {refDirection.Z:F3})");
+                    log.Add($"    Новый угол (dot): {Math.Abs(pickDir.DotProduct(refDirection)):F3}");
+                }
+
+                // УЛУЧШЕННЫЙ ПОДХОД: получаем грань с правильным направлением
+                Reference faceRef = null;
+                
+                try
+                {
+                    faceRef = PickHostFace(doc, hostElement, mergedCenter, pickDir);
+                    log.Add($"    Грань через PickHostFace: {faceRef != null}");
+                    
+                    // Метод 2: Fallback - простое получение первой доступной грани
+                    if (faceRef == null)
+                    {
+                        if (hostElement is Wall wall)
+                        {
+                            var faces = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+                            faceRef = faces.FirstOrDefault();
+                            log.Add($"    Грань через Exterior: {faceRef != null}");
+                            
+                            if (faceRef == null)
+                            {
+                                faces = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Interior);
+                                faceRef = faces.FirstOrDefault();
+                                log.Add($"    Грань через Interior: {faceRef != null}");
+                            }
+                        }
+                        else if (hostElement is Floor floor)
+                        {
+                            var faces = HostObjectUtils.GetTopFaces(floor);
+                            faceRef = faces.FirstOrDefault();
+                            log.Add($"    Грань плиты (верх): {faceRef != null}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Add($"    Ошибка поиска грани: {ex.Message}");
+                }
+
+                if (faceRef == null)
+                {
+                    log.Add($"    ⚠️ Грань не найдена, пытаемся создать host-based отверстие");
+                    
+                    // Последняя попытка - создаем отверстие как host-based
+                    try
+                    {
+                        var hostBasedInstance = doc.Create.NewFamilyInstance(
+                            mergedCenter, mergedSymbol, hostElement, 
+                            Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                        
+                        // Устанавливаем глубину объединенного отверстия
+                        SetDepthParam(hostBasedInstance, mergedDepthMm);
+                        
+                        log.Add($"    ✅ Создано host-based отверстие");
+                        log.Add($"    Установлена глубина: {mergedDepthMm:F0}мм");
+                        return hostBasedInstance;
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Add($"    ❌ Ошибка создания host-based отверстия: {ex.Message}");
+                        return null;
+                    }
+                }
+
+                // Проектируем центр объединения на найденную грань
+                XYZ projectedCenter = mergedCenter;
+                try
+                {
+                    Face targetFace = hostElement.GetGeometryObjectFromReference(faceRef) as Face;
+                    if (targetFace != null)
+                    {
+                        var projection = targetFace.Project(mergedCenter);
+                        if (projection != null)
+                        {
+                            projectedCenter = projection.XYZPoint;
+                            log.Add($"    Центр спроектирован на грань: ({projectedCenter.X * 304.8:F0}, {projectedCenter.Y * 304.8:F0}, {projectedCenter.Z * 304.8:F0})");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.Add($"    Предупреждение проекции: {ex.Message}");
+                }
+
+                // Создаем face-based экземпляр с проектированным центром
+                var mergedInstance = doc.Create.NewFamilyInstance(faceRef, projectedCenter, refDirection, mergedSymbol);
+                
+                // Устанавливаем глубину объединенного отверстия
+                SetDepthParam(mergedInstance, mergedDepthMm);
+                log.Add($"    Установлена глубина: {mergedDepthMm:F0}мм");
 
                 return mergedInstance;
             }
@@ -1699,21 +1896,4 @@ namespace RevitMEPHoleManager
         }
     }
 
-    /// <summary>
-    /// Конвертер bool в "Да"/"Нет" для отображения в DataGrid
-    /// </summary>
-    public class BoolToYesNoConverter : IValueConverter
-    {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-        {
-            if (value is bool boolValue)
-                return boolValue ? "Да" : "Нет";
-            return "Нет";
-        }
-
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-        {
-            return value?.ToString() == "Да";
-        }
-    }
 }
