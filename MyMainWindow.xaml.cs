@@ -1693,8 +1693,8 @@ namespace RevitMEPHoleManager
                     log.Add($"    ✅ Найден существующий типоразмер '{typeName}'");
                 }
 
-                // Размещаем объединенное отверстие
-                if (!mergedSymbol.IsActive) mergedSymbol.Activate();
+                // Готовим базовый символ для размещения (используем первое отверстие)
+                var baseSymbol = firstHole.Symbol;
 
                 // Получаем ПРАВИЛЬНОЕ направление для поиска грани
                 XYZ pickDir;
@@ -1837,11 +1837,18 @@ namespace RevitMEPHoleManager
                     // Последняя попытка - создаем отверстие как host-based
                     try
                     {
+                        // ➊ Создаем host-based отверстие с базовым символом
+                        log.Add($"    Создание host-based с базовым символом: {baseSymbol.Name}");
                         var hostBasedInstance = doc.Create.NewFamilyInstance(
-                            mergedCenter, mergedSymbol, hostElement, 
+                            mergedCenter, baseSymbol, hostElement, 
                             Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
                         
-                        // Устанавливаем глубину объединенного отверстия
+                        // ➋ Переключаем на нужный типоразмер
+                        log.Add($"    Переключение на типоразмер: {mergedSymbol.Name}");
+                        if (!mergedSymbol.IsActive) mergedSymbol.Activate();
+                        hostBasedInstance.ChangeTypeId(mergedSymbol.Id);
+                        
+                        // ➌ Устанавливаем глубину объединенного отверстия
                         SetDepthParam(hostBasedInstance, mergedDepthMm);
                         
                         log.Add($"    ✅ Создано host-based отверстие");
@@ -1875,10 +1882,16 @@ namespace RevitMEPHoleManager
                     log.Add($"    Предупреждение проекции: {ex.Message}");
                 }
 
-                // Создаем face-based экземпляр с проектированным центром
-                var mergedInstance = doc.Create.NewFamilyInstance(faceRef, projectedCenter, refDirection, mergedSymbol);
+                // ➊ Создаем face-based экземпляр с БАЗОВЫМ символом
+                log.Add($"    Создание отверстия с базовым символом: {baseSymbol.Name}");
+                var mergedInstance = doc.Create.NewFamilyInstance(faceRef, projectedCenter, refDirection, baseSymbol);
                 
-                // Устанавливаем глубину объединенного отверстия
+                // ➋ Переключаем на нужный типоразмер
+                log.Add($"    Переключение на типоразмер: {mergedSymbol.Name}");
+                if (!mergedSymbol.IsActive) mergedSymbol.Activate();
+                mergedInstance.ChangeTypeId(mergedSymbol.Id);
+                
+                // ➌ Устанавливаем глубину объединенного отверстия
                 SetDepthParam(mergedInstance, mergedDepthMm);
                 log.Add($"    Установлена глубина: {mergedDepthMm:F0}мм");
 
