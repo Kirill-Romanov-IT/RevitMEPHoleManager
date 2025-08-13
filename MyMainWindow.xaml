@@ -160,8 +160,13 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Button Content="Старт" Width="120" Height="40" Background="LimeGreen" Foreground="White" HorizontalAlignment="Center" Click="StartButton_Click"/>
+            
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Content="Старт" Width="120" Height="40" Background="LimeGreen" Foreground="White" Margin="0,0,10,0" Click="StartButton_Click"/>
+                <Button Content="Объединить" Width="120" Height="40" Background="Orange" Foreground="White" Click="MergeButton_Click"/>
+            </StackPanel>
             <Button Content="?" Width="30" Height="30" FontSize="14" FontWeight="Bold" Background="#163D7A" Foreground="White" BorderBrush="{x:Null}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Padding="0" Grid.Column="1" Margin="0,0,-18,-17">
                 <Button.Resources>
                     <Style TargetType="Border">

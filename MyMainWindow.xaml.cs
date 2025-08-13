@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Windows;
@@ -864,69 +865,15 @@ namespace RevitMEPHoleManager
             var (wRnd, wRec, fRnd, fRec, clashList, hostStats) =
                 IntersectionStats.Analyze(hostElems, mepList, clearance);
 
-            //─────────────────────────────────────────────
-            // 3‑A. ОБЪЕДИНЯЕМ ОТВЕРСТИЯ (новый код)
-            //─────────────────────────────────────────────
-            bool mergeOn = EnableMergeChk.IsChecked == true;
-            double mergeDist = 0;
-            if (mergeOn && double.TryParse(MergeDistBox.Text, out double mTmp) && mTmp > 0)
-                mergeDist = mTmp;       // мм
+            // Объединение отверстий теперь выполняется отдельной кнопкой "Объединить"
 
             var logger = new HoleLogger();
-            if (mergeOn) logger.Add($"Порог объединения: {mergeDist} мм, clearance: {clearance} мм");
+            logger.Add($"Clearance: {clearance} мм");
 
-            // — вычисляем «чистый» зазор между наружными контурами —
-            if (mergeDist > 0)
-            {
-                double gapLimitFt = UnitUtils.ConvertToInternalUnits(mergeDist, UnitTypeId.Millimeters);
+            // Размещение отверстий БЕЗ предварительного объединения
 
-                foreach (var grp in clashList.GroupBy(r => r.HostId))
-                {
-                    var rows = grp.ToList();
 
-                    for (int i = 0; i < rows.Count; i++)
-                    {
-                        double minGapFt = double.MaxValue;
-
-                        for (int j = 0; j < rows.Count; j++)
-                        {
-                            if (i == j) continue;
-
-                            // ➊ расстояние между центрами
-                            double centerDistFt = rows[i].Center.DistanceTo(rows[j].Center);
-
-                            // ➋ радиусы (DN/2) в футах
-                            double r1 = rows[i].WidthFt / 2;   // widthFt вы заполняете в Analyze
-                            double r2 = rows[j].WidthFt / 2;
-
-                            // ➌ «чистый» зазор
-                            double gapFt = centerDistFt - (r1 + r2);
-
-                            if (gapFt < minGapFt) minGapFt = gapFt;
-                        }
-
-                        // ➍ если зазор меньше порога — показываем в гриде
-                        if (minGapFt < gapLimitFt)
-                        {
-                            rows[i].GapMm = Math.Round(
-                                UnitUtils.ConvertFromInternalUnits(minGapFt, UnitTypeId.Millimeters));
-                }
-                else
-                {
-                            rows[i].GapMm = null;              // ячейка остаётся пустой
-                        }
-                    }
-                }
-            }
-
-            // Убираем предварительное объединение - будем делать это после размещения
-            // if (mergeOn)
-            // {
-            //     clashList = HoleGeometry.MergeByIntersection(clashList, clearance, logger).ToList();
-            //     LogBox.Text = logger.ToString();
-            //     LogBox.ScrollToEnd();
-            // }
-            //─────────────────────────────────────────────
+            // Объединение отверстий будет выполняться отдельной кнопкой
 
             /* --- 3.1   DataGrid с детализацией пересечений
              *            + группировка по HostId            --- */
@@ -944,6 +891,9 @@ namespace RevitMEPHoleManager
                 //$"В перекрытиях:\n  • круглые   — {fRnd}\n  • квадратные — {fRec}");
 
             //── 4. вставка отверстий ──
+            logger.Add("═══ ЭТАП РАЗМЕЩЕНИЯ ОДИНОЧНЫХ ОТВЕРСТИЙ ═══");
+            logger.Add($"Количество отверстий к размещению: {clashList.Count}");
+            
             int placed = 0;
             Options opt = new Options { ComputeReferences = true };
 
@@ -954,12 +904,26 @@ namespace RevitMEPHoleManager
             {
                 tr.Start();
 
+                int currentHole = 0;
                 foreach (var row in clashList)          // список уже после Merge
+                {
+                    currentHole++;
+                    logger.Add($"┌─ Отверстие {currentHole}/{clashList.Count} ─");
+                    logger.Add($"│ MEP: {row.MepId}, Host: {row.HostId}");
+                    logger.Add($"│ Размер: {row.HoleWidthMm:F0}×{row.HoleHeightMm:F0}мм");
+                    logger.Add($"│ Тип: {row.HoleTypeName}");
+                    logger.Add($"│ Позиция: ({row.CenterXft * 304.8:F0}, {row.CenterYft * 304.8:F0}, {row.CenterZft * 304.8:F0})");
+                    if (row.IsDiagonal)
+                        logger.Add($"│ Наклонная труба: Да");
+
+                    try
                 {
                     // ── 4.2 получаем (или создаём) FamilySymbol с именем row.HoleTypeName ──
                     FamilySymbol targetSym;
                     if (!typeCache.TryGetValue(row.HoleTypeName, out targetSym))
                     {
+                        logger.Add($"│ Поиск типоразмера: {row.HoleTypeName}");
+                        
                         targetSym = family.GetFamilySymbolIds()
                                           .Select(id => doc.GetElement(id) as FamilySymbol)
                                           .FirstOrDefault(s => s.Name.Equals(row.HoleTypeName,
@@ -967,18 +931,35 @@ namespace RevitMEPHoleManager
 
                         if (targetSym == null)                    // если нет — дублируем "Копия1"
                         {
+                            logger.Add($"│ Создаем новый типоразмер: {row.HoleTypeName}");
                             targetSym = holeSym.Duplicate(row.HoleTypeName) as FamilySymbol;
+                }
+                else
+                {
+                            logger.Add($"│ Найден существующий типоразмер: {row.HoleTypeName}");
                         }
                         
                         // Устанавливаем размеры
                         SetSize(targetSym, row.HoleWidthMm, row.HoleHeightMm);
+                        logger.Add($"│ Установлены размеры: {row.HoleWidthMm:F0}×{row.HoleHeightMm:F0}мм");
                         
                         typeCache[row.HoleTypeName] = targetSym;
                     }
+                    else
+                    {
+                        logger.Add($"│ Типоразмер из кэша: {row.HoleTypeName}");
+                    }
 
                     // ── 4.3 вставляем отверстие ──
+                    logger.Add($"│ Размещение отверстия...");
                     Element host = doc.GetElement(new ElementId(row.HostId));
-                    if (host == null) continue;
+                    if (host == null) 
+                    {
+                        logger.Add($"│ ❌ Хост не найден (ID: {row.HostId})");
+                        logger.Add($"└─ Пропуск");
+                        continue;
+                    }
+                    logger.Add($"│ Хост: {host.GetType().Name} (ID: {row.HostId})");
 
                     Level hostLvl = null;
 
@@ -1049,9 +1030,9 @@ namespace RevitMEPHoleManager
                     {
                         var projGroup = face?.Project(row.GroupCtr);
                         placePt = projGroup?.XYZPoint ?? face?.Project(clashPt)?.XYZPoint ?? clashPt;
-                    }
-                    else
-                    {
+                }
+                else
+                {
                         // Для одиночного отверстия: находим среднюю точку между входом и выходом трубы через стену
                         placePt = CalculateMidPointOnWall(row, host, face);
                     }
@@ -1188,13 +1169,19 @@ namespace RevitMEPHoleManager
                     }
 
                     // ➊ вставляем face-based экземпляр базовым символом (Копия1)
+                    logger.Add($"│ Создание FamilyInstance...");
+                    logger.Add($"│ Точка размещения: ({placePt.X * 304.8:F0}, {placePt.Y * 304.8:F0}, {placePt.Z * 304.8:F0})");
+                    
                     FamilyInstance inst = doc.Create.NewFamilyInstance(faceRef,
                                                                        placePt, refDir, holeSym);
 
                     // ➋ переключаем на нужный тип
                     if (!targetSym.IsActive) targetSym.Activate();   // важно до смены
                     inst.ChangeTypeId(targetSym.Id);
-                    placed++;
+                        placed++;
+                    
+                    logger.Add($"│ ✅ Отверстие размещено! ID: {inst.Id.IntegerValue}");
+                    logger.Add($"└─ Успешно ({placed}/{clashList.Count})");
 
                     // ── 4.4 Уровень спецификации ──
                     if (hostLvl == null) continue;
@@ -1240,40 +1227,32 @@ namespace RevitMEPHoleManager
                         double offset = row.CenterZft - hostLvl.Elevation - halfHft;
                         pOff.Set(offset);                               // футы
                     }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Add($"│ ❌ Ошибка размещения: {ex.Message}");
+                        logger.Add($"└─ Пропуск");
+                    }
                 }
 
+                logger.Add($"═══ ЗАВЕРШЕНИЕ РАЗМЕЩЕНИЯ ═══");
+                logger.Add($"Успешно размещено: {placed} из {clashList.Count} отверстий");
+                
                 tr.Commit();
             }
 
-            // ═══ НОВАЯ ЛОГИКА: ДВУХЭТАПНОЕ ОБЪЕДИНЕНИЕ ОТВЕРСТИЙ ═══
+            // ═══ ЗАВЕРШЕНИЕ РАЗМЕЩЕНИЯ ═══
+            LogBox.Text = logger.ToString();
+            LogBox.ScrollToEnd();
+            
             if (placed > 0)
             {
-                logger.Add("═══ ЭТАП 2: АНАЛИЗ РАЗМЕЩЕННЫХ ОТВЕРСТИЙ ═══");
-                
-                if (mergeOn)
-                {
-                    int merged = AnalyzeAndMergeHoles(doc, family, mergeDist, logger);
-                    LogBox.Text = logger.ToString();
-                    LogBox.ScrollToEnd();
-                    
-                    MessageBox.Show($"Размещено отверстий: {placed}\nОбъединено кластеров: {merged}",
-                                    "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                else
-                {
-                    // Анализируем пересечения БЕЗ объединения - только для диагностики
-                    AnalyzeHoleIntersections(doc, family, mergeDist, logger);
-                    LogBox.Text = logger.ToString();
-                    LogBox.ScrollToEnd();
-                    
-                    MessageBox.Show($"Вставлено отверстий: {placed}",
-                                    "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
+                MessageBox.Show($"Размещено отверстий: {placed}\n\nИспользуйте кнопку 'Объединить' для объединения пересекающихся отверстий.",
+                                "Размещение завершено", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
-                MessageBox.Show($"Вставлено отверстий: {placed}",
-                                "Результат", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Не было размещено ни одного отверстия.", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
@@ -1318,10 +1297,18 @@ namespace RevitMEPHoleManager
             try
             {
                 // Шаг 1: Найти все размещенные экземпляры семейства отверстий
+                if (holeFamily == null)
+                {
+                    log.Add("❌ Ошибка: Семейство отверстий не выбрано (holeFamily = null)");
+                    return 0;
+                }
+
+                log.Add($"Анализируем семейство: {holeFamily.Name}");
+
                 var placedHoles = new FilteredElementCollector(doc)
                     .OfClass(typeof(FamilyInstance))
                     .Cast<FamilyInstance>()
-                    .Where(fi => fi.Symbol.Family.Id == holeFamily.Id)
+                    .Where(fi => fi?.Symbol?.Family?.Id == holeFamily.Id)
                     .ToList();
 
                 log.Add($"Найдено размещенных отверстий: {placedHoles.Count}");
@@ -1331,7 +1318,7 @@ namespace RevitMEPHoleManager
 
                 // Шаг 2: Группируем по хост-элементу (стена/плита)
                 var hostGroups = placedHoles
-                    .Where(hole => hole.Host != null)
+                    .Where(hole => hole?.Host?.Id != null)
                     .GroupBy(hole => hole.Host.Id.IntegerValue)
                     .Where(group => group.Count() > 1) // Только группы с несколькими отверстиями
                     .ToList();
@@ -1341,16 +1328,39 @@ namespace RevitMEPHoleManager
                 // ДИАГНОСТИКА: покажем все отверстия и их позиции
                 foreach (var hole in placedHoles)
                 {
-                    var pos = GetLocalPosition(hole);
-                    var hostId = hole.Host?.Id.IntegerValue ?? -1;
-                    log.Add($"  Отверстие {hole.Id}: Host={hostId}, позиция=({pos?.X * 304.8:F0}, {pos?.Y * 304.8:F0}, {pos?.Z * 304.8:F0})");
+                    try
+                    {
+                        var pos = GetLocalPosition(hole);
+                        var hostId = hole?.Host?.Id?.IntegerValue ?? -1;
+                        var holeId = hole?.Id?.IntegerValue ?? -1;
+                        
+                        if (pos != null)
+                        {
+                            log.Add($"  Отверстие {holeId}: Host={hostId}, позиция=({pos.X * 304.8:F0}, {pos.Y * 304.8:F0}, {pos.Z * 304.8:F0})");
+                        }
+                        else
+                        {
+                            log.Add($"  Отверстие {holeId}: Host={hostId}, позиция=ОШИБКА (GetLocalPosition вернул null)");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Add($"  Отверстие: Ошибка получения данных - {ex.Message}");
+                    }
                 }
 
-                using (Transaction tr = new Transaction(doc, "Merge intersecting holes"))
+                if (hostGroups.Count == 0)
                 {
-                    tr.Start();
+                    log.Add("❌ Нет хостов с несколькими отверстиями - объединение невозможно");
+                    log.Add("   Причины могут быть:");
+                    log.Add("   • Все отверстия находятся в разных стенах/плитах");
+                    log.Add("   • На каждом хосте только по одному отверстию");
+                    log.Add("   • Отверстия имеют Host = null");
+                    return 0;
+                }
 
-                    foreach (var hostGroup in hostGroups)
+                // Используем внешнюю транзакцию из MergeButton_Click
+                foreach (var hostGroup in hostGroups)
                     {
                         log.Add($"Анализ хоста ID {hostGroup.Key}:");
                         
@@ -1402,9 +1412,6 @@ namespace RevitMEPHoleManager
                             }
                         }
                     }
-
-                tr.Commit();
-            }
 
                 log.Add($"Итого объединено кластеров: {mergedCount}");
             }
@@ -1608,20 +1615,64 @@ namespace RevitMEPHoleManager
                 double minZ = bounds.Min(b => b.MinZ);
                 double maxZ = bounds.Max(b => b.MaxZ);
 
-                // Размеры объединенного отверстия по крайним точкам + дополнительный зазор
-                double mergedWidthMm = (maxX - minX) * 304.8 + 100; // +100мм запас
-                double mergedHeightMm = (maxY - minY) * 304.8 + 100; // +100мм запас
+                // ПРАВИЛЬНЫЙ расчет: максимальные размеры отдельных отверстий + запас на объединение
+                double maxHoleWidthMm = cluster.Max(h => GetHoleWidth(h));
+                double maxHoleHeightMm = cluster.Max(h => GetHoleHeight(h));
+                
+                // Размеры объединенного отверстия:
+                // 1. Минимум = максимальный размер отдельного отверстия
+                // 2. MBR (если отверстия расположены в плане рядом) + запас
+                double mbrWidthMm = (maxX - minX) * 304.8;
+                double mbrHeightMm = (maxY - minY) * 304.8;
+                
+                log.Add($"    MBR расчет: X[{minX * 304.8:F0}..{maxX * 304.8:F0}] = {mbrWidthMm:F0}мм, Y[{minY * 304.8:F0}..{maxY * 304.8:F0}] = {mbrHeightMm:F0}мм");
+                
+                double mergedWidthMm = Math.Max(maxHoleWidthMm + 50, mbrWidthMm + 100); // максимум из размера отверстия и MBR
+                double mergedHeightMm = Math.Max(maxHoleHeightMm + 50, mbrHeightMm + 100); // +50мм запас, +100мм для MBR
                 double mergedDepthMm = (maxZ - minZ) * 304.8 + 100; // глубина объединенного отверстия
+                
+                // ПРОВЕРКА: итоговое отверстие не должно быть меньше исходных
+                log.Add($"    Проверка размеров: объединенное {mergedWidthMm:F0}×{mergedHeightMm:F0}мм vs макс.исходное {maxHoleWidthMm:F0}×{maxHoleHeightMm:F0}мм");
+                
+                if (mergedWidthMm < maxHoleWidthMm)
+                {
+                    log.Add($"    ⚠️ Ширина {mergedWidthMm:F0}мм меньше исходной {maxHoleWidthMm:F0}мм, корректируем");
+                    mergedWidthMm = maxHoleWidthMm + 100;
+                    log.Add($"    ✅ Ширина скорректирована до {mergedWidthMm:F0}мм");
+                }
+                else
+                {
+                    log.Add($"    ✅ Ширина {mergedWidthMm:F0}мм >= исходной {maxHoleWidthMm:F0}мм - OK");
+                }
+                
+                if (mergedHeightMm < maxHoleHeightMm)
+                {
+                    log.Add($"    ⚠️ Высота {mergedHeightMm:F0}мм меньше исходной {maxHoleHeightMm:F0}мм, корректируем");
+                    mergedHeightMm = maxHoleHeightMm + 100;
+                    log.Add($"    ✅ Высота скорректирована до {mergedHeightMm:F0}мм");
+                }
+                else
+                {
+                    log.Add($"    ✅ Высота {mergedHeightMm:F0}мм >= исходной {maxHoleHeightMm:F0}мм - OK");
+                }
+                
+                log.Add($"    Макс. размеры отверстий: {maxHoleWidthMm:F0}×{maxHoleHeightMm:F0}мм");
+                log.Add($"    MBR области: {mbrWidthMm:F0}×{mbrHeightMm:F0}мм");
+                
+                // ФИНАЛЬНЫЕ РАЗМЕРЫ после всех проверок и коррекций
+                log.Add($"    ═══ ФИНАЛЬНЫЕ РАЗМЕРЫ ═══");
+                log.Add($"    Размер объединенного: {mergedWidthMm:F0}×{mergedHeightMm:F0}мм (глубина: {mergedDepthMm:F0}мм)");
                 
                 // Центр объединенного отверстия - геометрический центр области пересечения
                 XYZ mergedCenter = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
 
-                log.Add($"    Размер объединенного: {mergedWidthMm:F0}×{mergedHeightMm:F0}мм (глубина: {mergedDepthMm:F0}мм)");
                 log.Add($"    Границы: X[{minX * 304.8:F0}..{maxX * 304.8:F0}] Y[{minY * 304.8:F0}..{maxY * 304.8:F0}] Z[{minZ * 304.8:F0}..{maxZ * 304.8:F0}]");
                 log.Add($"    Центр объединения: ({mergedCenter.X * 304.8:F0}, {mergedCenter.Y * 304.8:F0}, {mergedCenter.Z * 304.8:F0})");
 
-                // Создаем типоразмер для объединенного отверстия
+                // Создаем типоразмер для объединенного отверстия ПОСЛЕ всех расчетов
+                log.Add($"    ═══ СОЗДАНИЕ ТИПОРАЗМЕРА ═══");
                 string typeName = $"Прям. {Math.Ceiling(mergedWidthMm)}×{Math.Ceiling(mergedHeightMm)}";
+                log.Add($"    Имя типоразмера: '{typeName}'");
                 var firstHole = cluster.First();
                 var hostElement = firstHole.Host;
 
@@ -1632,8 +1683,14 @@ namespace RevitMEPHoleManager
 
                 if (mergedSymbol == null)
                 {
+                    log.Add($"    Типоразмер '{typeName}' не найден, создаем новый");
                     mergedSymbol = firstHole.Symbol.Duplicate(typeName) as FamilySymbol;
                     SetSize(mergedSymbol, mergedWidthMm, mergedHeightMm);
+                    log.Add($"    ✅ Создан новый типоразмер с размерами {mergedWidthMm:F0}×{mergedHeightMm:F0}мм");
+                }
+                else
+                {
+                    log.Add($"    ✅ Найден существующий типоразмер '{typeName}'");
                 }
 
                 // Размещаем объединенное отверстие
@@ -1839,15 +1896,53 @@ namespace RevitMEPHoleManager
         /// </summary>
         private double GetHoleWidth(FamilyInstance hole)
         {
-            var widthParam = hole.LookupParameter("Ширина") ?? 
-                           hole.LookupParameter("Width") ??
-                           hole.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
-            
-            if (widthParam != null && widthParam.HasValue)
+            try
             {
-                return UnitUtils.ConvertFromInternalUnits(widthParam.AsDouble(), UnitTypeId.Millimeters);
+                // Сначала пробуем параметры типоразмера (FamilySymbol)
+                var symbol = hole.Symbol;
+                if (symbol != null)
+                {
+                    var widthParam = symbol.LookupParameter("Ширина") ?? 
+                                   symbol.LookupParameter("Width") ??
+                                   symbol.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
+                    
+                    if (widthParam != null && widthParam.HasValue)
+                    {
+                        double widthValue = UnitUtils.ConvertFromInternalUnits(widthParam.AsDouble(), UnitTypeId.Millimeters);
+                        Debug.WriteLine($"GetHoleWidth: Hole {hole.Id}, Symbol: {symbol.Name}, Width: {widthValue:F0}мм");
+                        return widthValue;
+                    }
+                }
+                
+                // Затем пробуем параметры экземпляра
+                var instanceWidthParam = hole.LookupParameter("Ширина") ?? 
+                                       hole.LookupParameter("Width") ??
+                                       hole.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
+                
+                if (instanceWidthParam != null && instanceWidthParam.HasValue)
+                {
+                    double widthValue = UnitUtils.ConvertFromInternalUnits(instanceWidthParam.AsDouble(), UnitTypeId.Millimeters);
+                    Debug.WriteLine($"GetHoleWidth: Hole {hole.Id}, Instance param, Width: {widthValue:F0}мм");
+                    return widthValue;
+                }
+                
+                // Если ничего не найдено, пытаемся извлечь из имени типоразмера
+                string typeName = symbol?.Name ?? "";
+                System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(typeName, @"(\d+)×(\d+)");
+                if (match.Success && double.TryParse(match.Groups[1].Value, out double widthFromName))
+                {
+                    Debug.WriteLine($"GetHoleWidth: Hole {hole.Id}, From name '{typeName}', Width: {widthFromName:F0}мм");
+                    return widthFromName;
+                }
+                
+                Debug.WriteLine($"GetHoleWidth ERROR: Hole {hole.Id}, Type: {typeName} - не удалось получить ширину");
+                throw new InvalidOperationException($"Не удалось получить ширину отверстия {hole.Id}, тип: {typeName}");
             }
-            return 200; // fallback
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"GetHoleWidth EXCEPTION: Hole {hole.Id}, Error: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>
@@ -1855,15 +1950,53 @@ namespace RevitMEPHoleManager
         /// </summary>
         private double GetHoleHeight(FamilyInstance hole)
         {
-            var heightParam = hole.LookupParameter("Высота") ?? 
-                            hole.LookupParameter("Height") ??
-                            hole.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
-            
-            if (heightParam != null && heightParam.HasValue)
+            try
             {
-                return UnitUtils.ConvertFromInternalUnits(heightParam.AsDouble(), UnitTypeId.Millimeters);
+                // Сначала пробуем параметры типоразмера (FamilySymbol)
+                var symbol = hole.Symbol;
+                if (symbol != null)
+                {
+                    var heightParam = symbol.LookupParameter("Высота") ?? 
+                                    symbol.LookupParameter("Height") ??
+                                    symbol.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
+                    
+                    if (heightParam != null && heightParam.HasValue)
+                    {
+                        double heightValue = UnitUtils.ConvertFromInternalUnits(heightParam.AsDouble(), UnitTypeId.Millimeters);
+                        Debug.WriteLine($"GetHoleHeight: Hole {hole.Id}, Symbol: {symbol.Name}, Height: {heightValue:F0}мм");
+                        return heightValue;
+                    }
+                }
+                
+                // Затем пробуем параметры экземпляра
+                var instanceHeightParam = hole.LookupParameter("Высота") ?? 
+                                        hole.LookupParameter("Height") ??
+                                        hole.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
+                
+                if (instanceHeightParam != null && instanceHeightParam.HasValue)
+                {
+                    double heightValue = UnitUtils.ConvertFromInternalUnits(instanceHeightParam.AsDouble(), UnitTypeId.Millimeters);
+                    Debug.WriteLine($"GetHoleHeight: Hole {hole.Id}, Instance param, Height: {heightValue:F0}мм");
+                    return heightValue;
+                }
+                
+                // Если ничего не найдено, пытаемся извлечь из имени типоразмера
+                string typeName = symbol?.Name ?? "";
+                System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(typeName, @"(\d+)×(\d+)");
+                if (match.Success && double.TryParse(match.Groups[2].Value, out double heightFromName))
+                {
+                    Debug.WriteLine($"GetHoleHeight: Hole {hole.Id}, From name '{typeName}', Height: {heightFromName:F0}мм");
+                    return heightFromName;
+                }
+                
+                Debug.WriteLine($"GetHoleHeight ERROR: Hole {hole.Id}, Type: {typeName} - не удалось получить высоту");
+                throw new InvalidOperationException($"Не удалось получить высоту отверстия {hole.Id}, тип: {typeName}");
             }
-            return 200; // fallback
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"GetHoleHeight EXCEPTION: Hole {hole.Id}, Error: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>
@@ -1871,6 +2004,12 @@ namespace RevitMEPHoleManager
         /// </summary>
         private XYZ GetLocalPosition(FamilyInstance hole)
         {
+            if (hole == null)
+            {
+                System.Diagnostics.Debug.WriteLine("GetLocalPosition: hole is null");
+                return null;
+            }
+
             try
             {
                 var location = hole.Location as LocationPoint;
@@ -1892,6 +2031,73 @@ namespace RevitMEPHoleManager
             {
                 System.Diagnostics.Debug.WriteLine($"Ошибка получения позиции отверстия {hole.Id}: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Обработчик кнопки "Объединить" - анализирует уже размещенные отверстия и объединяет пересекающиеся
+        /// </summary>
+        private void MergeButton_Click(object sender, RoutedEventArgs e)
+        {
+            Document doc = _uiApp.ActiveUIDocument.Document;
+
+            // Проверяем выбранное семейство
+            if (FamilyCombo.SelectedValue == null)
+            {
+                MessageBox.Show("Выберите семейство отверстий!", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Получаем семейство из ComboBox (аналогично StartButton_Click)
+            Family selectedFamily = doc.GetElement((ElementId)FamilyCombo.SelectedValue) as Family;
+            if (selectedFamily == null)
+            {
+                MessageBox.Show("Не удалось найти выбранное семейство в проекте!", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            
+            try
+            {
+                using (Transaction tr = new Transaction(doc, "Объединение отверстий"))
+                {
+                    tr.Start();
+
+                    // Создаем логгер для детальной информации
+                    var log = new HoleLogger();
+                    log.Add("═══ АНАЛИЗ И ОБЪЕДИНЕНИЕ РАЗМЕЩЕННЫХ ОТВЕРСТИЙ ═══");
+
+                    // Получаем параметры объединения
+                    double mergeThresholdMm = 300; // по умолчанию 300мм
+                    if (double.TryParse(MergeDistBox?.Text?.Replace(",", "."), out double userThreshold))
+                    {
+                        mergeThresholdMm = userThreshold;
+                    }
+
+                    log.Add($"Порог объединения: {mergeThresholdMm:F0}мм");
+
+                    // Анализируем и объединяем отверстия
+                    int mergedClusters = AnalyzeAndMergeHoles(doc, selectedFamily, mergeThresholdMm, log);
+
+                    tr.Commit();
+
+                    // Всегда показываем детальный лог для диагностики
+                    string message = $"Объединение завершено!\n\nОбъединено кластеров: {mergedClusters}";
+                    
+                    // Показываем лог в LogBox для удобства просмотра
+                    LogBox.Text = log.ToString();
+                    LogBox.ScrollToEnd();
+                    
+                    // И в MessageBox краткую сводку + полный лог
+                    message += $"\n\nДетальный лог:\n{log.ToString()}";
+
+                    MessageBox.Show(message, "Результат объединения", MessageBoxButton.OK, 
+                        mergedClusters > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при объединении отверстий:\n{ex.Message}", "Ошибка", 
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }
