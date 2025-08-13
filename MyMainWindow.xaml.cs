@@ -8,7 +8,8 @@ using System.ComponentModel;
 using System.Globalization;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
-using Autodesk.Revit.DB.Plumbing;   // ← новый using
+using Autodesk.Revit.DB.Plumbing;   // для Pipe
+using Autodesk.Revit.DB.Mechanical; // для Duct
 
 namespace RevitMEPHoleManager
 {
@@ -19,13 +20,7 @@ namespace RevitMEPHoleManager
         public void HR() => sb.AppendLine(new string('─', 70));
         public override string ToString() => sb.ToString();
     }
-    internal class PipeRow
-    {
-        public int Id { get; set; }
-        public string System { get; set; }
-        public double DN { get; set; }    // мм
-        public double Length { get; set; }    // мм
-    }
+    
     public partial class MainWindow : Window
     {
         private readonly UIApplication _uiApp;
@@ -350,6 +345,9 @@ namespace RevitMEPHoleManager
             InitializeComponent();
             _uiApp = uiApp;
             PopulateGenericModelFamilies();
+            
+            // Автоматический анализ проекта при запуске
+            LoadProjectInformation();
         }
 
         //────────────────────────────────────────────────
@@ -373,6 +371,347 @@ namespace RevitMEPHoleManager
             FamilyCombo.DisplayMemberPath = "Name";
             FamilyCombo.SelectedValuePath = "Id";
             if (list.Count > 0) FamilyCombo.SelectedIndex = 0;
+            
+            // Настройки по умолчанию
+            ClearanceBox.Text = "50";
+            MergeDistBox.Text = "200";
+        }
+
+        /// <summary>
+        /// Автоматический анализ всех MEP элементов и стен в проекте при запуске
+        /// </summary>
+        private void LoadProjectInformation()
+        {
+            try
+            {
+                Document doc = _uiApp.ActiveUIDocument.Document;
+                
+                // Загружаем информацию о трубах
+                LoadPipeInformation(doc);
+                
+                // Загружаем информацию о воздуховодах
+                LoadDuctInformation(doc);
+                
+                // Загружаем информацию о лотках
+                LoadTrayInformation(doc);
+                
+                // Загружаем информацию о стенах
+                LoadWallInformation(doc);
+                
+                // Добавляем сводную информацию в лог
+                LogBox.Text = $"=== АНАЛИЗ ПРОЕКТА ===\r\n" +
+                             $"Дата анализа: {DateTime.Now:dd.MM.yyyy HH:mm}\r\n" +
+                             $"Файл: {doc.Title}\r\n\r\n" +
+                             "Загружена информация о всех элементах проекта.\r\n" +
+                             "Для запуска расчета отверстий нажмите 'Старт'.\r\n\r\n";
+            }
+            catch (Exception ex)
+            {
+                LogBox.Text = $"Ошибка при загрузке информации о проекте:\r\n{ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Загружает информацию о трубах
+        /// </summary>
+        private void LoadPipeInformation(Document doc)
+        {
+            var pipes = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_PipeCurves)
+                .ToElements()
+                .Where(e => e is Pipe)
+                .Cast<Pipe>()
+                .ToList();
+
+            var pipeRows = new List<PipeRow>();
+
+            foreach (var pipe in pipes)
+            {
+                try
+                {
+                    string systemName = "Не определена";
+                    string levelName = "Не определен";
+                    double lengthMm = 0;
+                    double dnMm = 0;
+                    string status = "✅ OK";
+
+                    // Получаем систему
+                    if (pipe.MEPSystem?.Name != null)
+                        systemName = pipe.MEPSystem.Name;
+
+                    // Получаем уровень
+                    var level = doc.GetElement(pipe.LevelId) as Level;
+                    if (level != null)
+                        levelName = level.Name;
+
+                    // Получаем длину
+                    var lengthParam = pipe.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
+                    if (lengthParam?.HasValue == true)
+                        lengthMm = UnitUtils.ConvertFromInternalUnits(lengthParam.AsDouble(), UnitTypeId.Millimeters);
+
+                    // Получаем диаметр
+                    if (SizeHelper.TryGetSizes(pipe, out double wMm, out double hMm, out var shape))
+                    {
+                        dnMm = wMm;
+                    }
+                    else
+                    {
+                        status = "⚠️ Размеры не определены";
+                    }
+
+                    pipeRows.Add(new PipeRow
+                    {
+                        Id = pipe.Id.IntegerValue,
+                        System = systemName,
+                        DN = dnMm,
+                        Length = lengthMm,
+                        Level = levelName,
+                        Status = status
+                    });
+                }
+                catch
+                {
+                    pipeRows.Add(new PipeRow
+                    {
+                        Id = pipe.Id.IntegerValue,
+                        System = "Ошибка",
+                        DN = 0,
+                        Length = 0,
+                        Level = "Ошибка",
+                        Status = "❌ Ошибка анализа"
+                    });
+                }
+            }
+
+            PipeGrid.ItemsSource = pipeRows;
+        }
+
+        /// <summary>
+        /// Загружает информацию о воздуховодах
+        /// </summary>
+        private void LoadDuctInformation(Document doc)
+        {
+            var ducts = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_DuctCurves)
+                .ToElements()
+                .Where(e => e is Duct)
+                .Cast<Duct>()
+                .ToList();
+
+            var ductRows = new List<DuctRow>();
+
+            foreach (var duct in ducts)
+            {
+                try
+                {
+                    string systemName = "Не определена";
+                    string levelName = "Не определен";
+                    string shapeStr = "Не определена";
+                    string sizeStr = "Не определен";
+                    double lengthMm = 0;
+                    string status = "✅ OK";
+
+                    // Получаем систему
+                    if (duct.MEPSystem?.Name != null)
+                        systemName = duct.MEPSystem.Name;
+
+                    // Получаем уровень
+                    var level = doc.GetElement(duct.LevelId) as Level;
+                    if (level != null)
+                        levelName = level.Name;
+
+                    // Получаем длину
+                    var lengthParam = duct.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
+                    if (lengthParam?.HasValue == true)
+                        lengthMm = UnitUtils.ConvertFromInternalUnits(lengthParam.AsDouble(), UnitTypeId.Millimeters);
+
+                    // Получаем размеры через улучшенный алгоритм
+                    if (SizeHelper.TryGetSizes(duct, out double wMm, out double hMm, out var shape))
+                    {
+                        shapeStr = shape.ToString();
+                        
+                        if (shape == ShapeKind.Round)
+                            sizeStr = $"Ø{wMm:F0}";
+                        else
+                            sizeStr = $"{wMm:F0}×{hMm:F0}";
+                    }
+                    else
+                    {
+                        status = "⚠️ Размеры не определены";
+                    }
+
+                    ductRows.Add(new DuctRow
+                    {
+                        Id = duct.Id.IntegerValue,
+                        System = systemName,
+                        Shape = shapeStr,
+                        Size = sizeStr,
+                        Length = lengthMm,
+                        Level = levelName,
+                        Status = status
+                    });
+                }
+                catch
+                {
+                    ductRows.Add(new DuctRow
+                    {
+                        Id = duct.Id.IntegerValue,
+                        System = "Ошибка",
+                        Shape = "Ошибка",
+                        Size = "Ошибка",
+                        Length = 0,
+                        Level = "Ошибка",
+                        Status = "❌ Ошибка анализа"
+                    });
+                }
+            }
+
+            DuctGrid.ItemsSource = ductRows;
+        }
+
+        /// <summary>
+        /// Загружает информацию о кабельных лотках
+        /// </summary>
+        private void LoadTrayInformation(Document doc)
+        {
+            var trays = new FilteredElementCollector(doc)
+                .WhereElementIsNotElementType()
+                .OfCategory(BuiltInCategory.OST_CableTray)
+                .ToElements()
+                .ToList();
+
+            var trayRows = new List<TrayRow>();
+
+            foreach (var tray in trays)
+            {
+                try
+                {
+                    string systemName = "Не определена";
+                    string levelName = "Не определен";
+                    string sizeStr = "Не определен";
+                    double lengthMm = 0;
+                    string status = "✅ OK";
+
+                    // Получаем уровень
+                    var levelParam = tray.get_Parameter(BuiltInParameter.RBS_START_LEVEL_PARAM);
+                    if (levelParam?.HasValue == true)
+                    {
+                        var level = doc.GetElement(levelParam.AsElementId()) as Level;
+                        if (level != null)
+                            levelName = level.Name;
+                    }
+
+                    // Получаем длину
+                    var lengthParam = tray.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
+                    if (lengthParam?.HasValue == true)
+                        lengthMm = UnitUtils.ConvertFromInternalUnits(lengthParam.AsDouble(), UnitTypeId.Millimeters);
+
+                    // Получаем размеры
+                    if (SizeHelper.TryGetSizes(tray, out double wMm, out double hMm, out var shape))
+                    {
+                        sizeStr = $"{wMm:F0}×{hMm:F0}";
+                    }
+                    else
+                    {
+                        status = "⚠️ Размеры не определены";
+                    }
+
+                    trayRows.Add(new TrayRow
+                    {
+                        Id = tray.Id.IntegerValue,
+                        System = systemName,
+                        Size = sizeStr,
+                        Length = lengthMm,
+                        Level = levelName,
+                        Status = status
+                    });
+                }
+                catch
+                {
+                    trayRows.Add(new TrayRow
+                    {
+                        Id = tray.Id.IntegerValue,
+                        System = "Ошибка",
+                        Size = "Ошибка",
+                        Length = 0,
+                        Level = "Ошибка",
+                        Status = "❌ Ошибка анализа"
+                    });
+                }
+            }
+
+            TrayGrid.ItemsSource = trayRows;
+        }
+
+        /// <summary>
+        /// Загружает информацию о стенах
+        /// </summary>
+        private void LoadWallInformation(Document doc)
+        {
+            var walls = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_Walls)
+                .WhereElementIsNotElementType()
+                .ToElements()
+                .Cast<Wall>()
+                .ToList();
+
+            var wallRows = new List<WallRow>();
+
+            foreach (var wall in walls)
+            {
+                try
+                {
+                    string wallName = wall.Name ?? "Без имени";
+                    string wallType = "Не определен";
+                    string levelName = "Не определен";
+                    double thicknessMm = 0;
+                    double areaM2 = 0;
+
+                    // Получаем тип стены
+                    var wallTypeElement = doc.GetElement(wall.GetTypeId()) as WallType;
+                    if (wallTypeElement != null)
+                        wallType = wallTypeElement.Name;
+
+                    // Получаем уровень
+                    var level = doc.GetElement(wall.LevelId) as Level;
+                    if (level != null)
+                        levelName = level.Name;
+
+                    // Получаем толщину
+                    var thicknessParam = wall.get_Parameter(BuiltInParameter.GENERIC_THICKNESS);
+                    if (thicknessParam?.HasValue == true)
+                        thicknessMm = UnitUtils.ConvertFromInternalUnits(thicknessParam.AsDouble(), UnitTypeId.Millimeters);
+
+                    // Получаем площадь
+                    var areaParam = wall.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED);
+                    if (areaParam?.HasValue == true)
+                        areaM2 = UnitUtils.ConvertFromInternalUnits(areaParam.AsDouble(), UnitTypeId.SquareMeters);
+
+                    wallRows.Add(new WallRow
+                    {
+                        Id = wall.Id.IntegerValue,
+                        Name = wallName,
+                        Type = wallType,
+                        ThicknessMm = thicknessMm,
+                        AreaM2 = areaM2,
+                        Level = levelName
+                    });
+                }
+                catch
+                {
+                    wallRows.Add(new WallRow
+                    {
+                        Id = wall.Id.IntegerValue,
+                        Name = "Ошибка",
+                        Type = "Ошибка",
+                        ThicknessMm = 0,
+                        AreaM2 = 0,
+                        Level = "Ошибка"
+                    });
+                }
+            }
+
+            WallGrid.ItemsSource = wallRows;
         }
 
         //────────────────────────────────────────────────

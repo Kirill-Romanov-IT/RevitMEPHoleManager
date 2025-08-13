@@ -81,15 +81,63 @@
         </DataGrid>
         
         <TabControl Grid.Row="3" Margin="0,12,0,0" Height="220">
-            <TabItem Header="Трубы проекта">
+            <TabItem Header="Трубы">
                 <DataGrid x:Name="PipeGrid"
                           AutoGenerateColumns="False"
                           IsReadOnly="True">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="80"/>
-                        <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="*"/>
-                        <DataGridTextColumn Header="DN, мм" Binding="{Binding DN}" Width="80"/>
-                        <DataGridTextColumn Header="Длина, мм" Binding="{Binding Length}" Width="90"/>
+                        <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="70"/>
+                        <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="120"/>
+                        <DataGridTextColumn Header="DN, мм" Binding="{Binding DN, StringFormat=N0}" Width="70"/>
+                        <DataGridTextColumn Header="Длина, м" Binding="{Binding LengthM, StringFormat=F1}" Width="70"/>
+                        <DataGridTextColumn Header="Уровень" Binding="{Binding Level}" Width="80"/>
+                        <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+
+            <TabItem Header="Воздуховоды">
+                <DataGrid x:Name="DuctGrid"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="70"/>
+                        <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="120"/>
+                        <DataGridTextColumn Header="Форма" Binding="{Binding Shape}" Width="70"/>
+                        <DataGridTextColumn Header="Размер" Binding="{Binding Size}" Width="100"/>
+                        <DataGridTextColumn Header="Длина, м" Binding="{Binding LengthM, StringFormat=F1}" Width="70"/>
+                        <DataGridTextColumn Header="Уровень" Binding="{Binding Level}" Width="80"/>
+                        <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+
+            <TabItem Header="Лотки">
+                <DataGrid x:Name="TrayGrid"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="70"/>
+                        <DataGridTextColumn Header="Система" Binding="{Binding System}" Width="120"/>
+                        <DataGridTextColumn Header="Размер" Binding="{Binding Size}" Width="100"/>
+                        <DataGridTextColumn Header="Длина, м" Binding="{Binding LengthM, StringFormat=F1}" Width="70"/>
+                        <DataGridTextColumn Header="Уровень" Binding="{Binding Level}" Width="80"/>
+                        <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+
+            <TabItem Header="Стены">
+                <DataGrid x:Name="WallGrid"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Id" Binding="{Binding Id}" Width="70"/>
+                        <DataGridTextColumn Header="Имя" Binding="{Binding Name}" Width="150"/>
+                        <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="120"/>
+                        <DataGridTextColumn Header="Толщина, мм" Binding="{Binding ThicknessMm, StringFormat=N0}" Width="80"/>
+                        <DataGridTextColumn Header="Площадь, м²" Binding="{Binding AreaM2, StringFormat=F1}" Width="80"/>
+                        <DataGridTextColumn Header="Уровень" Binding="{Binding Level}" Width="*"/>
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>
