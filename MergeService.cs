@@ -120,12 +120,10 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            // Итоговая формула габаритов отверстия (MBR)
-            double minX = cluster.Min(r => r.LocalCtr.X - r.WidthLocFt / 2);
-            double maxX = cluster.Max(r => r.LocalCtr.X + r.WidthLocFt / 2);
-            double holeWmm = (maxX - minX) * MmPerFt + 2 * clearanceMm;
+            // Итоговая формула габаритов отверстия - суммирование диаметров/ширин
+            double holeWmm = sumWidthFt * MmPerFt + 2 * clearanceMm;
             
-            log.Add($"minX = {minX * MmPerFt:F0}  maxX = {maxX * MmPerFt:F0}");
+            log.Add($"Σ ширин = {sumWidthFt * MmPerFt:F0} мм  +  2×зазор = {2 * clearanceMm:F0} мм");
 
             /*────────────────  Y-направление  (высота) ────────────────*/
             var ySort = cluster.GroupBy(c => c.MepId).Select(g => g.First())
@@ -146,14 +144,12 @@ namespace RevitMEPHoleManager
                 }
             }
 
-            // Итоговая формула габаритов отверстия (MBR) для Y
-            double minY = cluster.Min(r => r.LocalCtr.Y - r.HeightLocFt / 2);
-            double maxY = cluster.Max(r => r.LocalCtr.Y + r.HeightLocFt / 2);
-            double holeHmm = (maxY - minY) * MmPerFt + 2 * clearanceMm;
+            // Итоговая формула габаритов отверстия для Y - суммирование высот
+            double holeHmm = sumHeightFt * MmPerFt + 2 * clearanceMm;
             
-            log.Add($"minY = {minY * MmPerFt:F0}  maxY = {maxY * MmPerFt:F0}");
-            log.Add($"↦ Ширина = (maxX-minX)+2clr = {holeWmm:F0} мм");
-            log.Add($"↦ Высота = (maxY-minY)+2clr = {holeHmm:F0} мм");
+            log.Add($"Σ высот = {sumHeightFt * MmPerFt:F0} мм  +  2×зазор = {2 * clearanceMm:F0} мм");
+            log.Add($"↦ Ширина отверстия = {holeWmm:F0} мм");
+            log.Add($"↦ Высота отверстия = {holeHmm:F0} мм");
             log.HR();
 
             /*──────────────  центр отверстия  ─────────────*/
