@@ -911,7 +911,15 @@ namespace RevitMEPHoleManager
                     logger.Add($"┌─ Отверстие {currentHole}/{clashList.Count} ─");
                     logger.Add($"│ MEP: {row.MepId}, Host: {row.HostId}");
                     logger.Add($"│ Размер: {row.HoleWidthMm:F0}×{row.HoleHeightMm:F0}мм");
-                    logger.Add($"│ Тип: {row.HoleTypeName}");
+                    
+                    // Определяем тип геометрии согласно псевдокоду
+                    string geoType = "";
+                    if (row.HoleWidthMm == row.HoleHeightMm)
+                        geoType = " (квадратное для круглой трубы)";
+                    else
+                        geoType = " (прямоугольное для воздуховода)";
+                    
+                    logger.Add($"│ Тип: {row.HoleTypeName}{geoType}");
                     logger.Add($"│ Позиция: ({row.CenterXft * 304.8:F0}, {row.CenterYft * 304.8:F0}, {row.CenterZft * 304.8:F0})");
                     if (row.IsDiagonal)
                         logger.Add($"│ Наклонная труба: Да");
@@ -1615,49 +1623,29 @@ namespace RevitMEPHoleManager
                 double minZ = bounds.Min(b => b.MinZ);
                 double maxZ = bounds.Max(b => b.MaxZ);
 
-                // ПРАВИЛЬНЫЙ расчет: максимальные размеры отдельных отверстий + запас на объединение
-                double maxHoleWidthMm = cluster.Max(h => GetHoleWidth(h));
-                double maxHoleHeightMm = cluster.Max(h => GetHoleHeight(h));
+                // ═══ НОВЫЙ АЛГОРИТМ: СУММИРОВАНИЕ РАЗМЕРОВ ═══
+                // Согласно псевдокоду: складываем ширины и высоты всех отверстий в кластере
                 
-                // Размеры объединенного отверстия:
-                // 1. Минимум = максимальный размер отдельного отверстия
-                // 2. MBR (если отверстия расположены в плане рядом) + запас
-                double mbrWidthMm = (maxX - minX) * 304.8;
-                double mbrHeightMm = (maxY - minY) * 304.8;
+                double totalWidthMm = 0;
+                double totalHeightMm = 0;
                 
-                log.Add($"    MBR расчет: X[{minX * 304.8:F0}..{maxX * 304.8:F0}] = {mbrWidthMm:F0}мм, Y[{minY * 304.8:F0}..{maxY * 304.8:F0}] = {mbrHeightMm:F0}мм");
+                log.Add($"    ═══ СУММИРОВАНИЕ РАЗМЕРОВ ОТВЕРСТИЙ ═══");
+                foreach (var hole in cluster)
+                {
+                    double holeWidth = GetHoleWidth(hole);
+                    double holeHeight = GetHoleHeight(hole);
+                    totalWidthMm += holeWidth;
+                    totalHeightMm += holeHeight;
+                    log.Add($"    Отверстие {hole.Id}: {holeWidth:F0}×{holeHeight:F0}мм");
+                }
                 
-                double mergedWidthMm = Math.Max(maxHoleWidthMm + 50, mbrWidthMm + 100); // максимум из размера отверстия и MBR
-                double mergedHeightMm = Math.Max(maxHoleHeightMm + 50, mbrHeightMm + 100); // +50мм запас, +100мм для MBR
+                log.Add($"    ───────────────────────────────────");
+                log.Add($"    ИТОГО: {totalWidthMm:F0}×{totalHeightMm:F0}мм");
+                
+                // Финальные размеры объединенного отверстия
+                double mergedWidthMm = totalWidthMm;
+                double mergedHeightMm = totalHeightMm;
                 double mergedDepthMm = (maxZ - minZ) * 304.8 + 100; // глубина объединенного отверстия
-                
-                // ПРОВЕРКА: итоговое отверстие не должно быть меньше исходных
-                log.Add($"    Проверка размеров: объединенное {mergedWidthMm:F0}×{mergedHeightMm:F0}мм vs макс.исходное {maxHoleWidthMm:F0}×{maxHoleHeightMm:F0}мм");
-                
-                if (mergedWidthMm < maxHoleWidthMm)
-                {
-                    log.Add($"    ⚠️ Ширина {mergedWidthMm:F0}мм меньше исходной {maxHoleWidthMm:F0}мм, корректируем");
-                    mergedWidthMm = maxHoleWidthMm + 100;
-                    log.Add($"    ✅ Ширина скорректирована до {mergedWidthMm:F0}мм");
-                }
-                else
-                {
-                    log.Add($"    ✅ Ширина {mergedWidthMm:F0}мм >= исходной {maxHoleWidthMm:F0}мм - OK");
-                }
-                
-                if (mergedHeightMm < maxHoleHeightMm)
-                {
-                    log.Add($"    ⚠️ Высота {mergedHeightMm:F0}мм меньше исходной {maxHoleHeightMm:F0}мм, корректируем");
-                    mergedHeightMm = maxHoleHeightMm + 100;
-                    log.Add($"    ✅ Высота скорректирована до {mergedHeightMm:F0}мм");
-                }
-                else
-                {
-                    log.Add($"    ✅ Высота {mergedHeightMm:F0}мм >= исходной {maxHoleHeightMm:F0}мм - OK");
-                }
-                
-                log.Add($"    Макс. размеры отверстий: {maxHoleWidthMm:F0}×{maxHoleHeightMm:F0}мм");
-                log.Add($"    MBR области: {mbrWidthMm:F0}×{mbrHeightMm:F0}мм");
                 
                 // ФИНАЛЬНЫЕ РАЗМЕРЫ после всех проверок и коррекций
                 log.Add($"    ═══ ФИНАЛЬНЫЕ РАЗМЕРЫ ═══");
@@ -2078,6 +2066,7 @@ namespace RevitMEPHoleManager
                     // Создаем логгер для детальной информации
                     var log = new HoleLogger();
                     log.Add("═══ АНАЛИЗ И ОБЪЕДИНЕНИЕ РАЗМЕЩЕННЫХ ОТВЕРСТИЙ ═══");
+            log.Add("🎯 Алгоритм: суммирование ширин и высот пересекающихся отверстий");
 
                     // Получаем параметры объединения
                     double mergeThresholdMm = 300; // по умолчанию 300мм
